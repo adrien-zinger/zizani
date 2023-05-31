@@ -759,9 +759,6 @@ const RTCMessageRooter = [
 /** @type {RTCConfiguration} */
 const webRTCConfig = {
     iceServers: [
-        {
-            urls: "stun:stun.12voip.com:3478"
-        },
         { /* accès temporaire pour le test. Ceci devra être renseigné par l'utilisateur
              ou bien on donnera un accès gratuit et limité. */
             urls: "turn:adalrozin.xyz:5349",
@@ -793,7 +790,11 @@ async function createAnswer(offer) {
             .then(a => {
                 peerConn.setLocalDescription(a);
             });
-        setTimeout(() => resolve(peerConn), 5000);
+        peerConn.onicegatheringstatechange = ev => {
+            if (ev.target.iceGatheringState === "complete") {
+                resolve(peerConn);
+            }
+        };
     });
 }
 
@@ -838,7 +839,11 @@ async function createAnswerWithAudio(offer) {
             .then(a => {
                 peerConn.setLocalDescription(a);
             });
-        setTimeout(() => resolve(peerConn), 5000);
+        peerConn.onicegatheringstatechange = ev => {
+            if (ev.target.iceGatheringState === "complete") {
+                resolve(peerConn);
+            }
+        };
     });
 }
 
@@ -854,9 +859,11 @@ async function createOffer() {
     // A good offer take time to be created if you use stun
     // servers. 5000 ms are enough most of the time.
     return new Promise((resolve) => {
-        setTimeout(() => {
-            resolve(peerConn);
-        }, 5000);
+        peerConn.onicegatheringstatechange = ev => {
+            if (ev.target.iceGatheringState === "complete") {
+                resolve(peerConn);
+            }
+        };
     });
 }
 
@@ -903,9 +910,11 @@ async function createOfferWithAudio() {
     // A good offer take time to be created if you use stun
     // servers. 5000 ms are enough most of the time.
     return new Promise((resolve) => {
-        setTimeout(() => {
-            resolve(peerConn);
-        }, 5000);
+        peerConn.onicegatheringstatechange = ev => {
+            if (ev.target.iceGatheringState === "complete") {
+                resolve(peerConn);
+            }
+        };
     });
 }
 
