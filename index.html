@@ -36,7 +36,7 @@
     <form id="connectionForm" onsubmit="onFormSubmit(); return false;">
         <input id="pseudo" type="text" placeholder="anonymous" />
         <input id="room" type="text" placeholder="salon de discussion" />
-        <input id="server" type="text" placeholder="serveur de chemins" />
+        <input id="server" type="text" placeholder="chemin (optionnel)" />
         <input type="submit" hidden />
     </form>
 
@@ -56,12 +56,12 @@
         function onFormSubmit() {
             let roomElt = document.getElementById("room");
             let serverElt = document.getElementById("server");
-            if (roomElt.value === "" || serverElt.value === "")
-                alert("Renseigner le salon et le serveur");
+            if (roomElt.value === "")
+                alert("Renseigner le salon est indispensable");
             let pseudo = document.getElementById("pseudo");
             if (pseudo.value !== "")
                 setNickName(pseudo.value);
-            join(roomElt.value, serverElt.value);
+            join(roomElt.value, serverElt.value === "" ? "wss://adalrozin.xyz:8532" : serverElt.value);
         }
 
         function onMessageSubmit() {
