@@ -26,25 +26,65 @@
         ul li::before {
             content: "➜";
             font-size: 9;
+            margin: 0px 3px;
             color: black;
             display: inline-block;
+        }
+
+        body {
+            overscroll-behavior: contain;
+        }
+
+
+        #connectionForm {
+            position: relative;
+            z-index: 1;
+            background: #FFFFFF;
+            max-width: 360px;
+            margin: 0 auto 100px;
+            padding: 45px;
+            box-shadow: 0 0 20px 0 rgba(0, 0, 0, 0.2), 0 5px 5px 0 rgba(0, 0, 0, 0.24);
+        }
+
+        #connectionForm input {
+            outline: 0;
+            background: #f2f2f2;
+            width: 100%;
+            border: 0;
+            margin: 0 0 15px;
+            padding: 15px;
+            box-sizing: border-box;
+            font-size: 14px;
+        }
+
+        #connectionForm button {
+            text-transform: uppercase;
+            outline: 0;
+            width: fit-content;
+            border: 0;
+            background-color: white;
+            padding: 15px;
+            font-size: 11px;
+            -webkit-transition: all 0.3 ease;
+            transition: all 0.3 ease;
+            cursor: pointer;
         }
     </style>
 </header>
 
-<body style="height: 100%;">
+<body style="height: 100%; margin: 0px 8px;">
     <form id="connectionForm" onsubmit="onFormSubmit(); return false;">
         <input id="pseudo" type="text" placeholder="anonymous" />
         <input id="room" type="text" placeholder="salon de discussion" />
-        <input id="server" type="text" placeholder="chemin (optionnel)" />
-        <input type="submit" hidden />
+        <input type="submit" value="connexion" />
+        <button id="more" onclick="addOptions(); return false;">options</button>
     </form>
 
-    <div id="roomView" style="visibility: hidden;">
-        <ul id="outputView" style="height: fit-content; max-height: 80vh; width: 100vw; overflow: auto;"></ul>
-        <form id="messageForm" onsubmit="onMessageSubmit(); return false;"
-            style="max-height: 20vh; width: 80vw; position: absolute; bottom: 10px;">
-            <input id="message" type="text" autocomplete="off" style="width: 80%" disabled />
+    <div id="roomView" style="display: none; width: 95%">
+        <ul id="outputView" style="height: 88%; width: 100%; overflow: auto; margin: 0px; padding: 0px 8px;"></ul>
+        <form id="messageForm" style="height: 10%; width: 100%; margin: 0;">
+            <textarea rows="1" id="message" autocomplete="off" onkeydown="onWriting(arguments[0], this)"
+                style="resize: none; width: 90%; height: 100%; padding: 0; font-size: 13px;" disabled></textarea>
             <input type="submit" hidden />
         </form>
     </div>
@@ -52,16 +92,42 @@
     <script src="script.js"></script>
 
     <script>
+        /* Expands the connection form */
+        function addOptions() {
+            if (addOptions.value === undefined) {
+                let server = document.createElement('input');
+                server.type = "text";
+                server.id = "server"
+                server.placeholder = "chemin (optionnel)";
+                document.getElementById('connectionForm').appendChild(server);
+                addOptions.value = server;
+            } else {
+                addOptions.value.remove();
+                addOptions.value = undefined;
+            }
+        }
+
+        function onWriting(e, input) {
+            const keyCode = e.which || e.keyCode;
+            // 13 represents the Enter key
+            if (keyCode === 13 && !e.shiftKey) {
+                e.preventDefault();
+                onMessageSubmit()
+            }
+        }
 
         function onFormSubmit() {
             let roomElt = document.getElementById("room");
             let serverElt = document.getElementById("server");
+            let serverValue = "wss://adalrozin.xyz:8532";
+            if (serverElt !== null && serverElt.value === "")
+                serverValue = serverElt.value;
             if (roomElt.value === "")
                 alert("Renseigner le salon est indispensable");
             let pseudo = document.getElementById("pseudo");
             if (pseudo.value !== "")
                 setNickName(pseudo.value);
-            join(roomElt.value, serverElt.value === "" ? "wss://adalrozin.xyz:8532" : serverElt.value);
+            join(roomElt.value, serverValue);
         }
 
         function onMessageSubmit() {
@@ -95,9 +161,11 @@
         let status = 0; // idle
 
         onPrepareWsProposal = () => {
-            document.getElementById("connectionForm").style.visibility = "hidden";
-            document.getElementById("roomView").style.visibility = "visible";
+            document.getElementById("connectionForm").style.display = "none";
+            document.getElementById("roomView").style.display = "inline-block";
             pushMessage("info: recherche du salon", "info");
+            pushMessage(`info: vous pouvez passer des appels vocaux avec vos collaborateurs \
+            en utilisant la commande '/call', cette fonctionnalité est encore en phase de test`, "info");
         };
 
         onSendWsProposal = () => {
@@ -125,11 +193,32 @@
             }
         };
 
+        userAcceptCall = (pseudo, callback) => {
+            if (userAcceptCall.accepted) {
+                callback();
+            } else if (userAcceptCall.data[pseudo] === undefined) {
+                userAcceptCall.data[pseudo] = true;
+                let button = document.createElement('button');
+                button.innerHTML = "Accepter les appels entrant de " + pseudo;
+                button.onclick = () => {
+                    userAcceptCall.accepted = true;
+                    callback();
+                    button.remove();
+                    pushMessage("info: vous avez accepté les appels entrants", "info");
+                }
+                outputView.append(button);
+            }
+        };
+
+        userAcceptCall.data = {};
+
         getAudioElt = (label) => {
             console.log("create audio elt");
             let audio = document.createElement('audio');
             let mute = document.createElement('button');
             let volume = document.createElement('input');
+            let pseudo = document.createElement('p');
+            pseudo.innerHTML = label;
             let ctnr = document.createElement('div');
             volume.type = "range";
             volume.max = 100;
@@ -150,6 +239,7 @@
                 audio.volume = e.target.value / 100;
             };
             mute.innerText = "mute";
+            ctnr.appendChild(pseudo);
             ctnr.appendChild(audio);
             ctnr.appendChild(mute);
             ctnr.appendChild(volume);

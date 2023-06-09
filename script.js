@@ -56,6 +56,7 @@ let onSendWsProposal = () => { };
 let onWsProposalAnswerOpened = () => { };
 let onConnectionToRoomDone = () => { };
 let getAudioElt = () => { };
+let userAcceptCall = (callback) => { };
 
 // Les ids sont ordonné par le nombre de fois qu'on les a reçus.
 const messagesInfo = {
@@ -611,19 +612,22 @@ function onProposalAcceptedReceived(data) {
 /**
  * On reçoit du résaux une proposition d'appel audio. On va réponse oui en
  * envoyant une `answer` adaptée.
- * @param {{offer: RTCSessionDescription, channelLabel: string} data 
+ * @param {{offer: RTCSessionDescription, channelLabel: string, pseudo: string} data 
  * @param {RTCDataChannel} channel 
  */
 function onCallProposalReceived(data, channel) {
     console.log("call proposal received");
-
-    createAnswerWithAudio(data.offer).then(answer => {
-        const msg = {
-            path: rootCallProposalAccepted,
-            args: {answer: answer.localDescription, channelLabel: data.channelLabel}
-        }
-        channel.send(JSON.stringify(msg));
-        peerConnections.push(answer);
+    userAcceptCall(data.pseudo, () => {
+        createAnswerWithAudio(data.offer).then(answer => {
+            const msg = {
+                path: rootCallProposalAccepted,
+                args: {answer: answer.localDescription, channelLabel: data.channelLabel}
+            }
+            channel.send(JSON.stringify(msg));
+            channel.calling = true;
+            peerConnections.push(answer);
+            startCallWithCurrentCluster();
+        });
     });
 }
 
@@ -815,7 +819,8 @@ async function createAnswerWithAudio(offer) {
         let waiting = new Promise(resolve => deferedResolve = resolve);
         peerConn.ondatachannel = e => {
             console.log("data channel open")
-            e.channel.onmessage = () => { deferedResolve() };
+            e.channel.send(currData.nickname);
+            e.channel.onmessage = (event) => { deferedResolve(event.data) };
         };
         LOCAL_MEDIAS.getTracks().forEach(track => {
             console.log("add track")
@@ -823,11 +828,11 @@ async function createAnswerWithAudio(offer) {
         });
         peerConn.ontrack = (ev) => {
             console.log("fire on track");
-            waiting.then(() => {
+            waiting.then((pseudo) => {
                 console.log("show remote")
                 let remoteMedias = new MediaStream();
                 ev.streams[0].getTracks().forEach(track => remoteMedias.addTrack(track));
-                let elt = getAudioElt();
+                let elt = getAudioElt(pseudo);
                 if (elt != undefined) {
                     console.log("set remote medias")
                     elt.srcObject = remoteMedias;
@@ -882,8 +887,8 @@ async function createOfferWithAudio() {
     // coté et nous aurons une impréssion de synchronisation
     let waiting = new Promise(resolve => deferedResolve = resolve);
     peerConn.channel = channel;
-    channel.onopen = () => {
-        deferedResolve();
+    channel.onmessage = (event) => {
+        deferedResolve(event.data);
     };
     if (LOCAL_MEDIAS === undefined) {
         LOCAL_MEDIAS = await window.navigator
@@ -896,14 +901,17 @@ async function createOfferWithAudio() {
     });
     peerConn.ontrack = (ev) => {
         console.log("fire on track");
-        let remoteMedias = new MediaStream();
-        ev.streams[0].getTracks().forEach(track => remoteMedias.addTrack(track));
-        let elt = getAudioElt();
-        if (elt != undefined) {
-            console.log("set medias")
-            elt.srcObject = remoteMedias;
-        }
-        waiting.then(() => channel.send("ok"));
+        
+        waiting.then((pseudo) => {
+            channel.send(currData.nickname);
+            let remoteMedias = new MediaStream();
+            ev.streams[0].getTracks().forEach(track => remoteMedias.addTrack(track));
+            let elt = getAudioElt(pseudo);
+            if (elt != undefined) {
+                console.log("set medias")
+                elt.srcObject = remoteMedias;
+            }
+        });
     };
     let offer = await peerConn.createOffer();
     await peerConn.setLocalDescription(offer);
@@ -989,17 +997,21 @@ async function startCallWithCurrentCluster() {
     let newPeerConnections = await Promise.all(peerConnections.map(_ => createOfferWithAudio()));
     let i = 0;
     peerConnections.map(/** @type {PeerConnection} */pc => {
-        let newPc = newPeerConnections[i++];
-        console.assert(newPc != undefined);
-        console.assert(newPc.channel.label != undefined);
-        const msg = {
-            path: rootCallProposal,
-            args: {
-                channelLabel: newPc.channel.label,
-                offer: newPc.localDescription,
+        if (pc.channel.calling != true) {
+            let newPc = newPeerConnections[i++];
+            console.assert(newPc != undefined);
+            console.assert(newPc.channel.label != undefined);
+            const msg = {
+                path: rootCallProposal,
+                args: {
+                    channelLabel: newPc.channel.label,
+                    offer: newPc.localDescription,
+                    pseudo: currData.nickname
+                }
             }
+            pc.channel.send(JSON.stringify(msg));
+            pc.channel.calling = true;
         }
-        pc.channel.send(JSON.stringify(msg));
     });
     newPeerConnections.forEach(offer => peerConnectionCalls.push(offer));
 }
