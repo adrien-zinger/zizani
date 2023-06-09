@@ -122,8 +122,10 @@
             let serverValue = "wss://adalrozin.xyz:8532";
             if (serverElt !== null && serverElt.value === "")
                 serverValue = serverElt.value;
-            if (roomElt.value === "")
+            if (roomElt.value === "") {
                 alert("Renseigner le salon est indispensable");
+                return;
+            }
             let pseudo = document.getElementById("pseudo");
             if (pseudo.value !== "")
                 setNickName(pseudo.value);
