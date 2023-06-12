@@ -81,7 +81,7 @@
 
     <div id="roomView" style="display: none; width: 95%; max-height: 100%;">
         <ul id="outputView" style="height: 88%; width: 100%; overflow: auto; margin: 0px; padding: 0px 8px;"></ul>
-        <form id="messageForm" style="height: 10%; width: 100%; margin: 0;">
+        <form id="messageForm" style="height: 10%; width: 100%; margin: 0; position: absolute; bottom: 0; left: 0;">
             <textarea rows="1" id="message" autocomplete="off" onkeydown="onWriting(arguments[0], this)"
                 style="resize: none; width: 90%; height: 100%; padding: 0; font-size: 13px;" disabled></textarea>
             <input type="submit" value="Entrer" />
@@ -156,7 +156,7 @@
         }
 
         setOnMessages((/** @type {ChatMessage} */ message) => {
-            pushMessage(message.content);
+            pushMessage(`${message.nickname}: ${message.content}`);
         });
 
         let status = 0; // idle

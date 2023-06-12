@@ -25,15 +25,13 @@ const generateKeyPair = async () => {
         true,
         ["sign", "verify"]
     );
-
-    keyPair.publicKey = window.crypto.subtle.exportKey("spki", publicKey);
+    let buf = await window.crypto.subtle.exportKey("spki", publicKey);
+    let pubkey = String.fromCharCode.apply(null, new Uint8Array(buf));
+    keyPair.publicKey = btoa(pubkey);
     keyPair.privateKey = privateKey;
 };
 
 generateKeyPair().then(() => console.log("keys generated"));
-
-const sign = window.crypto.subtle.sign;
-const verify = window.crypto.subtle.verify;
 
 
 /****** MESSAGES IMPLEMENTATION */
@@ -43,6 +41,7 @@ const verify = window.crypto.subtle.verify;
  * @property {string} id
  * @property {number} timestamp
  * @property {string} content
+ * @property {string} nickname
  * @property {string} signature
  * @property {string} pubkey
  */
@@ -169,32 +168,73 @@ function onMsgRequestReceived(id, currChannel) {
 }
 
 /**
+* @param {ChatMessage} message
+* @returns {Promise<boolean>}
+*/
+async function verifyMessage(message) {
+
+
+    /*
+    Convert a string into an ArrayBuffer
+    from https://developers.google.com/web/updates/2012/06/How-to-convert-ArrayBuffer-to-and-from-String
+    */
+    function str2ab(str) {
+        const buf = new ArrayBuffer(str.length);
+        const bufView = new Uint8Array(buf);
+        for (let i = 0, strLen = str.length; i < strLen; i++) {
+            bufView[i] = str.charCodeAt(i);
+        }
+        return buf;
+    }
+
+    console.log(`verify ${message.id}`);
+    let data = new TextEncoder().encode(`${message.id}${message.content}${message.timestamp}${message.nickname}`);
+    console.log(message.pubkey);
+    let pubkeyStr = atob(message.pubkey);
+    let pubkeyBuffer = str2ab(pubkeyStr);
+
+    let pubkey = await window.crypto.subtle.importKey(    
+        "spki",
+        pubkeyBuffer,
+        {
+            name: "ECDSA",
+            hash: { name: "SHA-384" },
+        },
+        true,
+        ["verify"]
+    );
+
+    return window.crypto.subtle.verify(
+        {
+            name: "ECDSA",
+            hash: { name: "SHA-384" },
+        },
+        pubkey,
+        str2ab(atob(message.signature)),
+        data
+    );
+}
+
+/**
 * @param {ChatMessage} chatMessage
 * @param {RTCDataChannel} currChannel
 */
 function onMessageReceived(chatMessage, currChannel) {
-    /*
-    if (chatMessage.pubkey === undefined ||
-        chatMessage.signature === undefined) {
-        console.log("invalid signature");
-        banPeerByChannelId(currChannel.id);
-        return;
-    }
-
-    const pubkey = window.crypto.subtle.importKey(chatMessage.pubkey);
-    
-    if (!verify(null,
-        chatMessage.id + chatMessage.timestamp + chatMessage.content,
-        pubkey,
-        Buffer.from(chatMessage.signature, 'hex'))) {
-        console.log("invalid signature");
-        banPeerByChannelId(currChannel.id);
-        return;
-    }
-    */
-
     if (messagesReceived[chatMessage.id] !== undefined) {
         return;
+    }
+
+    if (currData.crypto) {
+        if (chatMessage.pubkey !== undefined &&
+            chatMessage.signature !== undefined) {
+            verifyMessage(chatMessage).then(res => console.log("verified" + res));
+        } else if (chatMessage.pubkey === undefined &&
+            chatMessage.signature === undefined) {
+            // nothing to do
+        } else {
+            console.log("strange behaviour behind the message " + chatMessage.id);
+            banPeerByChannelId(currChannel.id);
+        }
     }
 
     console.log(chatMessage);
@@ -242,34 +282,64 @@ function pullMessage() {
     tryPull();
 }
 
+/**
+ * Sign a given message concatenated a date and the current nickname
+ * @param {string} id
+ * @param {string} message
+ * @param {number} date
+ * 
+ * @returns {Promise<string>}
+ */
+async function signMessage(id, message, date) {
+    console.log(`sign ${id}${message}${date}${currData.nickname}`);
+    let data = new TextEncoder().encode(`${id}${message}${date}${currData.nickname}`);
+    let signatureBuf = await window.crypto.subtle.sign(
+        {
+            name: "ECDSA",
+            hash: {name: "SHA-384"},
+        },
+        keyPair.privateKey,
+        data
+    );
+    let signBin = String.fromCharCode.apply(null, new Uint8Array(signatureBuf));
+    return btoa(signBin);
+}
+
 function sendMessage(content) {
     if (keyPair.privateKey == null || keyPair.publicKey == null) {
         console.log("warn, key pair hasn't been generated");
         return;
     }
+
+    const timestamp = Date.now();
+
     const message = {
         id: window.crypto.randomUUID(),
-        timestamp: Date.now(),
+        timestamp,
         content,
+        nickname: currData.nickname,
         pubkey: keyPair.publicKey,
     };
 
-    //message.signature = window.crypto.subtle.sign(null,
-    //    keyPair.privateKey,
-    //    new TextEncoder().encode(`${message.id}${message.timestamp}${message.content}`))
-    //.toString('hex');
-    messagesReceived[message.id] = message;
-    peerConnections.forEach(pc => {
-        const msg = {
-            path: rootMessageIdentifier,
-            args: message.id,
+    async function _send(message) {
+        if (currData.crypto) {
+            message.signature = await signMessage(message.id, content, timestamp);
         }
-        try {
-            pc.channel.send(JSON.stringify(msg));
-        } catch {
-            banPeerById(pc.id);
-        }
-    });
+        messagesReceived[message.id] = message;
+        peerConnections.forEach(pc => {
+            const msg = {
+                path: rootMessageIdentifier,
+                args: message.id,
+            }
+            try {
+                pc.channel.send(JSON.stringify(msg));
+            } catch {
+                banPeerById(pc.id);
+            }
+        });
+    }
+
+    _send(message).then(console.log(`message id ${message.id} sent`));
 }
 
 /*** PATH SERVER IMPLEMENTATION */
@@ -937,6 +1007,7 @@ const currData = {
     onMessage(messages) {
         console.log(messages.pop());
     },
+    crypto: false,
 };
 
 /**
@@ -944,7 +1015,7 @@ const currData = {
  * @param {string} msg 
  */
 function send(msg) {
-    sendMessage(`${currData.nickname}: ${msg}`)
+    sendMessage(`${msg}`)
 }
 
 async function join(room, srv) {
