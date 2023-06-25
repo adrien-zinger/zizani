@@ -1,3 +1,4 @@
+<!DOCTYPE html>
 <html>
 
 <header>
@@ -35,12 +36,16 @@
             overscroll-behavior: contain;
         }
 
+        html {
+            overflow: hidden;
+            overscroll-behavior: none;
+        }
 
         #connectionForm {
             position: relative;
             z-index: 1;
             background: #FFFFFF;
-            margin: 0 auto 100px;
+            margin: 0 0 100px 0;
             padding: 45px;
             box-shadow: 0 0 20px 0 rgba(0, 0, 0, 0.2), 0 5px 5px 0 rgba(0, 0, 0, 0.24);
         }
@@ -71,8 +76,8 @@
     </style>
 </header>
 
-<body style="height: 100%; margin: 0px 8px;">
-    <form id="connectionForm" onsubmit="onFormSubmit(); return false;">
+<body style="height: 100vw; margin: 0px 8px;">
+    <form id="connectionForm" onsubmit="submitJoinRoom(); return false;">
         <input id="pseudo" type="text" placeholder="anonymous" />
         <input id="room" type="text" placeholder="salon de discussion" />
         <input type="submit" value="connexion" />
@@ -112,11 +117,11 @@
             // 13 represents the Enter key
             if (keyCode === 13 && !e.shiftKey) {
                 e.preventDefault();
-                onMessageSubmit()
+                onMessageSubmit();
             }
         }
 
-        function onFormSubmit() {
+        function submitJoinRoom() {
             let roomElt = document.getElementById("room");
             let serverElt = document.getElementById("server");
             let serverValue = "wss://adalrozin.xyz:8532";
@@ -129,7 +134,16 @@
             let pseudo = document.getElementById("pseudo");
             if (pseudo.value !== "")
                 setNickName(pseudo.value);
+            // Change url to keep current room and pseudo even
+            // after a refresh.
+            window.history.replaceState(
+                null,
+                "",
+                `${window.location.href}?room=${roomElt.value}`
+            );
+            console.log("join room");
             join(roomElt.value, serverValue);
+            submitJoinRoom = () => { };
         }
 
         function hash(str) {
@@ -187,9 +201,8 @@
             let newDiv = document.createElement('li');
             newDiv.innerText = msg;
             if (opt) {
-                if (opt.className) newDiv.className = className;
                 if (opt.data) {
-                    className.se
+                    newDiv.className = opt.data.className;
                     newDiv.data = data;
                 }
             }
@@ -293,6 +306,19 @@
             ctnr.appendChild(volume);
             outputView.appendChild(ctnr);
             return audio;
+        };
+
+        window.onload = () => {
+            console.log("on load")
+            const params = new URLSearchParams(window.location.search);
+            if (params) {
+                let serverValue = "wss://adalrozin.xyz:8532";
+                console.log("params", params)
+                if (params.get("room")) {
+                    console.log("join")
+                    join(params.get("room"), serverValue);
+                }
+            }
         };
     </script>
 </body>
