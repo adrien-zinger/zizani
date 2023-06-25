@@ -1,21 +1,25 @@
 /*** CRYPTO IMPLEMENTATION */
 
-const randomUUID = window.crypto.randomUUID;
-
-const keyPair = {
-    /** @type {CryptoKey} */
-    publicKey: undefined,
-    privateKey: undefined
-};
-
 function randomInt(max) {
     return Math.floor(Math.random() * max);
 }
 
+const signAlgo = {
+    name: "ECDSA",
+    namedCurve: "P-384"
+};
+
+const cryptoAlgo = {
+    name: "RSA-OAEP",
+    modulusLength: 4096,
+    publicExponent: new Uint8Array([1, 0, 1]),
+    hash: "SHA-256",
+};
+
 /**
  * @return {Promise<CryptoKeyPair>}
  */
-const generateKeyPair = async () => {
+const genSignKeyPair = async () => {
     /** @type {CryptoKeyPair} */
     let { privateKey, publicKey } = await window.crypto.subtle.generateKey(
         {
@@ -27,11 +31,170 @@ const generateKeyPair = async () => {
     );
     let buf = await window.crypto.subtle.exportKey("spki", publicKey);
     let pubkey = String.fromCharCode.apply(null, new Uint8Array(buf));
-    keyPair.publicKey = btoa(pubkey);
-    keyPair.privateKey = privateKey;
+    currData.signKeyPair.publicKey = btoa(pubkey);
+    currData.signKeyPair.privateKey = privateKey;
 };
 
-generateKeyPair().then(() => console.log("keys generated"));
+
+/**
+ * @return {Promise<CryptoKeyPair>}
+ */
+const genCryptoKeyPair = async () => {
+    /** @type {CryptoKeyPair} */
+    let { privateKey, publicKey } = await window.crypto.subtle.generateKey(
+        cryptoAlgo,
+        true,
+        ["encrypt", "decrypt"]
+    );
+    let buf = await window.crypto.subtle.exportKey("spki", publicKey);
+    let pubkey = String.fromCharCode.apply(null, new Uint8Array(buf));
+    currData.cryptoKeyPair.publicKey = btoa(pubkey);
+    currData.cryptoKeyPair.privateKey = privateKey;
+};
+
+/** Get from front end storage the keys given an id.
+ * The ID could be a name like `Ted`. The keys stored for Ted will be used
+ * and will still be the same in the next session.
+ */
+let getKeysFromStorage = (_id) => { /* to be defined by front end */ };
+let setKeysToStorage = (_id, _keys) => { /* to be defined by front end */ };
+
+function importFromString(key, algo, usage) {
+    return window.crypto.subtle.importKey(
+        "pkcs8",
+        str2ab(atob(key)),
+        algo,
+        true,
+        [ usage ]
+    );
+}
+
+async function exportAsString(key) {
+    let buf = await window.crypto.subtle.exportKey("pkcs8", key);
+    let pubkey = String.fromCharCode.apply(null, new Uint8Array(buf));
+    return btoa(pubkey);
+}
+
+// derive string key
+async function deriveKey(password) {
+    const algo = {
+      name: 'PBKDF2',
+      hash: 'SHA-256',
+      salt: new TextEncoder().encode('a-unique-salt'),
+      iterations: 1000
+    };
+
+    console.log("gen priv key");
+
+    let privkey = await window.crypto.subtle.importKey(
+        'raw',
+        new TextEncoder().encode(password),
+        { name: algo.name },
+        false,
+        [ 'deriveKey' ]
+    );
+
+    console.log("symetric priv key generated from password");
+
+    return window.crypto.subtle.deriveKey(
+        algo,
+        privkey,
+        {
+            name: 'AES-GCM',
+            length: 256
+        },
+        false,
+        [ 'encrypt', 'decrypt' ]
+    );
+}
+
+/**
+ * Encrypt function
+ * @param {string} str 
+ * @param {string} password
+ * @returns {Promise<string>}
+ */
+async function encrypt(str, password) {
+    const algo = {
+        name: 'AES-GCM',
+        length: 256,
+        iv: window.crypto.getRandomValues(new Uint8Array(12))
+    };
+
+    console.log("encrypt");
+    let key = await deriveKey(password);
+
+    // get encrypted buffer
+    let buf = await window.crypto.subtle.encrypt(
+        algo,
+        key,
+        new TextEncoder().encode(str)
+    );
+
+    let cipherText = btoa(String.fromCharCode.apply(null, new Uint8Array(buf)));
+
+    return JSON.stringify({
+        cipherText,
+        iv: btoa(String.fromCharCode.apply(null, algo.iv))
+    });
+}
+  
+/**
+ * Decrypt function
+ * @param {string} str 
+ * @param {string} password
+ * @returns {Promise<string>}
+ */
+async function decrypt(str, password) {
+    let encrypted = JSON.parse(str);
+    const algo = {
+        name: 'AES-GCM',
+        length: 256,
+        iv: str2ab(atob(encrypted.iv))
+    }
+
+    let key = await deriveKey(password);
+    let cipherText = str2ab(atob(encrypted.cipherText));
+    let dec = await window.crypto.subtle.decrypt(
+        algo,
+        key,
+        cipherText
+    );
+    return new TextDecoder().decode(dec);
+}
+
+async function loadKeys(id, password) {
+    let keys = getKeysFromStorage(id);
+    if (keys !== undefined) {
+        keys = JSON.parse(await decrypt(keys, password));
+        currData.signKeyPair.privateKey = await importFromString(keys.signKeyPair.privateKey, signAlgo, "sign");
+        currData.signKeyPair.publicKey = keys.signKeyPair.publicKey;
+        console.log("sign key imported")
+        currData.cryptoKeyPair.privateKey = await importFromString(keys.cryptoKeyPair.privateKey, cryptoAlgo, "decrypt");
+        currData.cryptoKeyPair.publicKey = keys.cryptoKeyPair.publicKey;
+        console.log("crypto key imported")
+        return;
+    }
+
+    await genSignKeyPair();
+    await genCryptoKeyPair();
+    console.log("keys generated");
+
+    keys = {
+        signKeyPair: {
+            publicKey: currData.signKeyPair.publicKey,
+            privateKey: await exportAsString(currData.signKeyPair.privateKey),
+        },
+        cryptoKeyPair: {
+            publicKey: currData.cryptoKeyPair.publicKey,
+            privateKey: await exportAsString(currData.cryptoKeyPair.privateKey),
+        }
+    };
+
+    setKeysToStorage(id, await encrypt(JSON.stringify(keys), password));
+    
+    currData.crypto = true;
+}
 
 
 /****** MESSAGES IMPLEMENTATION */
@@ -42,8 +205,9 @@ generateKeyPair().then(() => console.log("keys generated"));
  * @property {number} timestamp
  * @property {string} content
  * @property {string} nickname
- * @property {string} signature
- * @property {string} pubkey
+ * @property {string | undefined} signature
+ * @property {string | undefined} pubkey
+ * @property {string | undefined} epubkey
  */
 
 const messagesReceived = {};
@@ -55,7 +219,7 @@ let onSendWsProposal = () => { };
 let onWsProposalAnswerOpened = () => { };
 let onConnectionToRoomDone = () => { };
 let getAudioElt = () => { };
-let userAcceptCall = (callback) => { };
+let userAcceptCall = (_callback) => { };
 
 // Les ids sont ordonné par le nombre de fois qu'on les a reçus.
 const messagesInfo = {
@@ -167,31 +331,27 @@ function onMsgRequestReceived(id, currChannel) {
     currChannel.send(JSON.stringify(msg));
 }
 
+/*
+Convert a string into an ArrayBuffer
+from https://developers.google.com/web/updates/2012/06/How-to-convert-ArrayBuffer-to-and-from-String
+*/
+function str2ab(str) {
+    const buf = new ArrayBuffer(str.length);
+    const bufView = new Uint8Array(buf);
+    for (let i = 0, strLen = str.length; i < strLen; i++) {
+        bufView[i] = str.charCodeAt(i);
+    }
+    return buf;
+}
+
 /**
 * @param {ChatMessage} message
 * @returns {Promise<boolean>}
 */
 async function verifyMessage(message) {
-
-
-    /*
-    Convert a string into an ArrayBuffer
-    from https://developers.google.com/web/updates/2012/06/How-to-convert-ArrayBuffer-to-and-from-String
-    */
-    function str2ab(str) {
-        const buf = new ArrayBuffer(str.length);
-        const bufView = new Uint8Array(buf);
-        for (let i = 0, strLen = str.length; i < strLen; i++) {
-            bufView[i] = str.charCodeAt(i);
-        }
-        return buf;
-    }
-
-    console.log(`verify ${message.id}`);
-    let data = new TextEncoder().encode(`${message.id}${message.content}${message.timestamp}${message.nickname}`);
-    console.log(message.pubkey);
     let pubkeyStr = atob(message.pubkey);
     let pubkeyBuffer = str2ab(pubkeyStr);
+    let data = new TextEncoder().encode(`${message.id}${message.content}${message.timestamp}${message.nickname}`);
 
     let pubkey = await window.crypto.subtle.importKey(    
         "spki",
@@ -298,7 +458,7 @@ async function signMessage(id, message, date) {
             name: "ECDSA",
             hash: {name: "SHA-384"},
         },
-        keyPair.privateKey,
+        currData.signKeyPair.privateKey,
         data
     );
     let signBin = String.fromCharCode.apply(null, new Uint8Array(signatureBuf));
@@ -306,24 +466,21 @@ async function signMessage(id, message, date) {
 }
 
 function sendMessage(content) {
-    if (keyPair.privateKey == null || keyPair.publicKey == null) {
-        console.log("warn, key pair hasn't been generated");
-        return;
-    }
-
     const timestamp = Date.now();
 
+    /** @type {ChatMessage} */
     const message = {
         id: window.crypto.randomUUID(),
         timestamp,
         content,
         nickname: currData.nickname,
-        pubkey: keyPair.publicKey,
     };
 
     async function _send(message) {
         if (currData.crypto) {
             message.signature = await signMessage(message.id, content, timestamp);
+            message.pubkey = currData.signKeyPair.publicKey,
+            message.cryptoKey = currData.cryptoKeyPair.publicKey
         }
         messagesReceived[message.id] = message;
         peerConnections.forEach(pc => {
@@ -340,6 +497,36 @@ function sendMessage(content) {
     }
 
     _send(message).then(console.log(`message id ${message.id} sent`));
+}
+
+function sendPrivMessage(nickname, key, content) {
+    // TODO: quelques descriptions de la roadmap crypto
+
+    //      /priv jean coucou       Envoie un message privé à jean
+    //      /priv /call jean        Celui qui s'appelle jean capable de lire l'offre (et de le prouver)
+    //      /call                   Appel la premiere personne qui veux bien répondre.
+    //      /call jean              N'importe qui se nommant jean, peut être un peu foireu
+    //      /call jean yann         Envoie des offres à jean et yann, jean enverra une offre a yann (ordre de la liste)
+    //      /priv /call jean yann   Comme l'appelle normal, mais les offres sont encryptés et on verrifie les signatures
+
+    // Lorsqu'on reçoie un message signé, on peut enregistrer la signature en
+    // cliquant sur le message. Une fois la signature enregistré on verra le
+    // pseudo actuelle et celui qui à été utilisé pendant l'enregistrement. Si
+    // une personne utilise un pseudo enregistré sans signé ou avec une mauvaise
+    // signature, le message est d'une couleur différente. On peut bien sur
+    // avoir plusieurs enregistrements avec le même nom, et modifier localement
+    // le pseudo.
+
+    // Lorsqu'on active la feature crypto, on demande un mot de passe.
+    // /crypto on password
+    // Celà permet d'enregistrer dans le local storage les clefs publiques et privées
+    // encryptées. Par ailleurs, on peut importer un wallet sous format clair en json
+    // et encrypté par un mot de passe.
+
+    // - [ ] activer desactiver la feature crypto (les clefs sont générées si aucune n'est presente à l'activation)
+    // - [ ] enregistrer des clefs utilisateur
+    // - [ ] envoyer un message privé à une personne.
+    // - [ ] modifier le system d'appel, les offres sont propagées comme les autres messages.
 }
 
 /*** PATH SERVER IMPLEMENTATION */
@@ -1001,13 +1188,22 @@ async function createOfferWithAudio() {
 const currData = {
     joining: false,
     room: '',
-    proposalLoop: 0,
     pathServer: '',
     nickname: 'anonymous',
     onMessage(messages) {
         console.log(messages.pop());
     },
     crypto: false,
+    signKeyPair: {
+        /** @type {CryptoKey} */
+        publicKey: undefined,
+        privateKey: undefined
+    },
+    cryptoKeyPair: {
+        /** @type {CryptoKey} */
+        publicKey: undefined,
+        privateKey: undefined
+    }
 };
 
 /**
@@ -1020,7 +1216,6 @@ function send(msg) {
 
 async function join(room, srv) {
     currData.joining = true;
-    clearInterval(currData.proposalLoop);
 
     closePeers();
 

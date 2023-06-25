@@ -81,9 +81,10 @@
 
     <div id="roomView" style="display: none; width: 95%; max-height: 100%;">
         <ul id="outputView" style="height: 88%; width: 100%; overflow: auto; margin: 0px; padding: 0px 8px;"></ul>
-        <form id="messageForm" style="height: 10%; width: 100%; margin: 0; position: absolute; bottom: 0; left: 0;">
+        <form id="messageForm"
+            style="min-height: 30px; height: 10%; width: 100%; margin: 0; position: absolute; bottom: 0; left: 0;">
             <textarea rows="1" id="message" autocomplete="off" onkeydown="onWriting(arguments[0], this)"
-                style="resize: none; width: 90%; height: 100%; padding: 0; font-size: 13px;" disabled></textarea>
+                style="resize: none; width: 90%; height: 100%; padding: 0; font-size: 13px;"></textarea>
             <input type="submit" value="Entrer" />
         </form>
     </div>
@@ -131,6 +132,25 @@
             join(roomElt.value, serverValue);
         }
 
+        function hash(str) {
+            var hash = 0, i, chr;
+            for (i = 0; i < str.length; i++) {
+                chr = str.charCodeAt(i);
+                hash = ((hash << 5) - hash) + chr;
+                hash |= 0; // Convert to 32bit integer
+            }
+            return hash;
+        }
+
+        getKeysFromStorage = (id) => {
+            let keys = localStorage.getItem(id);
+            return keys ? keys : undefined;
+        }
+
+        setKeysToStorage = (id, keys) => {
+            localStorage.setItem(id, keys);
+        }
+
         function onMessageSubmit() {
             let msg = document.getElementById("message");
             if (msg.value === "/call") {
@@ -141,6 +161,21 @@
                 startCall();
                 return;
             }
+
+            if (msg.value.startsWith("/usekeys")) {
+                console.log("crypto", msg.value);
+                let args = msg.value.split(' ');
+                loadKeys(args[1], args[2]).then(() => {
+                    pushMessage(`info: you are currently using cryptography with ${args[1]}'s keys`, "info");
+                }).catch((err) => {
+                    console.error(err);
+                    pushMessage(`info: cannot load keys`, "info");
+                });
+                msg.value = "";
+                pushMessage(`info: loading ${args[1]}'s keys`, "info");
+                return;
+            }
+
             send(msg.value);
             pushMessage(`moi: ${msg.value}`);
             msg.value = "";
@@ -148,15 +183,27 @@
 
         const outputView = document.getElementById("outputView");
 
-        function pushMessage(msg, className) {
+        function pushMessage(msg, opt) {
             let newDiv = document.createElement('li');
             newDiv.innerText = msg;
-            if (className) newDiv.className = className;
+            if (opt) {
+                if (opt.className) newDiv.className = className;
+                if (opt.data) {
+                    className.se
+                    newDiv.data = data;
+                }
+            }
             outputView.appendChild(newDiv);
         }
 
-        setOnMessages((/** @type {ChatMessage} */ message) => {
-            pushMessage(`${message.nickname}: ${message.content}`);
+
+        setOnMessages((/** @type { ChatMessage } */ message) => {
+            pushMessage(`${message.nickname}: ${message.content}`, {
+                data: {
+                    epubkey: message.epubkey,
+                    pubkey: message.pubkey,
+                }
+            });
         });
 
         let status = 0; // idle
@@ -164,19 +211,19 @@
         onPrepareWsProposal = () => {
             document.getElementById("connectionForm").style.display = "none";
             document.getElementById("roomView").style.display = "inline-block";
-            pushMessage("info: recherche du salon", "info");
+            pushMessage("info: recherche du salon", { className: "info" });
             pushMessage(`info: vous pouvez passer des appels vocaux avec vos collaborateurs \
-            en utilisant la commande '/call', cette fonctionnalité est encore en phase de test`, "info");
+            en utilisant la commande '/call', cette fonctionnalité est encore en phase de test`, { className: "info" });
         };
 
         onSendWsProposal = () => {
             if (status != 1)
-                pushMessage("info: attente des participants", "info");
+                pushMessage("info: attente des participants", { className: "info" });
         };
 
         /** Afficher que le client est connecté */
         function activateRoom() {
-            pushMessage("info: vous êtes connecté", "info");
+            pushMessage("info: vous êtes connecté", { className: "info" });
             document.getElementById("message").disabled = false;
         }
 
@@ -205,7 +252,7 @@
                     userAcceptCall.accepted = true;
                     callback();
                     button.remove();
-                    pushMessage("info: vous avez accepté les appels entrants", "info");
+                    pushMessage("info: vous avez accepté les appels entrants", { className: "info" });
                 }
                 outputView.append(button);
             }
