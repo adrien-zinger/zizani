@@ -3,8 +3,20 @@
 
 <header>
     <style>
+        body {
+            overscroll-behavior: contain;
+            width: 100vw;
+            /* temporary, I want to compute dynamically the height for the nexts steps */
+            height: 80vh;
+            margin: 0px 8px;
+        }
+
         ul {
-            list-style: none;
+            /* outputView */
+            height: 88%;
+            width: 100%;
+            overflow: auto;
+            margin: 0;
             padding: 0;
         }
 
@@ -24,6 +36,7 @@
             color: rgb(126, 92, 51);
         }
 
+        /*
         ul li::before {
             content: "➜";
             font-size: 9;
@@ -31,10 +44,7 @@
             color: black;
             display: inline-block;
         }
-
-        body {
-            overscroll-behavior: contain;
-        }
+        */
 
         html {
             overflow: hidden;
@@ -61,6 +71,12 @@
             font-size: 14px;
         }
 
+        #roomView {
+            display: none;
+            width: inherit;
+            max-height: 80vh;
+        }
+
         #connectionForm button {
             text-transform: uppercase;
             outline: 0;
@@ -73,10 +89,32 @@
             transition: all 0.3 ease;
             cursor: pointer;
         }
+
+        #messageForm {
+            min-height: 30px;
+            width: inherit;
+            margin: 0 0;
+            position: absolute;
+            /* also temporary, I need to compute dynamically the bottom for mobile) */
+            bottom: 10vh;
+            left: 0;
+        }
+
+        #messageTextArea {
+            width: inherit;
+            font-size: 13px;
+            resize: none;
+        }
+
+        #messageSubmit {
+            position: absolute;
+            right: 10px;
+            bottom: 15px;
+        }
     </style>
 </header>
 
-<body style="height: 100vw; margin: 0px 8px;">
+<body>
     <form id="connectionForm" onsubmit="submitJoinRoom(); return false;">
         <input id="pseudo" type="text" placeholder="anonymous" />
         <input id="room" type="text" placeholder="salon de discussion" />
@@ -84,243 +122,17 @@
         <button id="more" onclick="addOptions(); return false;">options</button>
     </form>
 
-    <div id="roomView" style="display: none; width: 95%; max-height: 100%;">
-        <ul id="outputView" style="height: 88%; width: 100%; overflow: auto; margin: 0px; padding: 0px 8px;"></ul>
-        <form id="messageForm"
-            style="min-height: 30px; height: 10%; width: 100%; margin: 0; position: absolute; bottom: 0; left: 0;">
-            <textarea rows="1" id="message" autocomplete="off" onkeydown="onWriting(arguments[0], this)"
-                style="resize: none; width: 90%; height: 100%; padding: 0; font-size: 13px;"></textarea>
-            <input type="submit" value="Entrer" />
+    <div id="roomView">
+        <ul id="outputView"></ul>
+        <form id="messageForm">
+            <textarea rows="3" id="messageTextArea" autocomplete="off"
+                onkeydown="onWriting(arguments[0], this)"></textarea>
+            <input id="messageSubmit" type="submit" value="Entrer" />
         </form>
     </div>
 
-    <script src="script.js"></script>
-
-    <script>
-        /* Expands the connection form */
-        function addOptions() {
-            if (addOptions.value === undefined) {
-                let server = document.createElement('input');
-                server.type = "text";
-                server.id = "server"
-                server.placeholder = "chemin (optionnel)";
-                document.getElementById('connectionForm').appendChild(server);
-                addOptions.value = server;
-            } else {
-                addOptions.value.remove();
-                addOptions.value = undefined;
-            }
-        }
-
-        function onWriting(e, input) {
-            const keyCode = e.which || e.keyCode;
-            // 13 represents the Enter key
-            if (keyCode === 13 && !e.shiftKey) {
-                e.preventDefault();
-                onMessageSubmit();
-            }
-        }
-
-        function submitJoinRoom() {
-            let roomElt = document.getElementById("room");
-            let serverElt = document.getElementById("server");
-            let serverValue = "wss://adalrozin.xyz:8532";
-            if (serverElt !== null && serverElt.value === "")
-                serverValue = serverElt.value;
-            if (roomElt.value === "") {
-                alert("Renseigner le salon est indispensable");
-                return;
-            }
-            let pseudo = document.getElementById("pseudo");
-            if (pseudo.value !== "")
-                setNickName(pseudo.value);
-            // Change url to keep current room and pseudo even
-            // after a refresh.
-            window.history.replaceState(
-                null,
-                "",
-                `${window.location.href}?room=${roomElt.value}`
-            );
-            console.log("join room");
-            join(roomElt.value, serverValue);
-            submitJoinRoom = () => { };
-        }
-
-        function hash(str) {
-            var hash = 0, i, chr;
-            for (i = 0; i < str.length; i++) {
-                chr = str.charCodeAt(i);
-                hash = ((hash << 5) - hash) + chr;
-                hash |= 0; // Convert to 32bit integer
-            }
-            return hash;
-        }
-
-        getKeysFromStorage = (id) => {
-            let keys = localStorage.getItem(id);
-            return keys ? keys : undefined;
-        }
-
-        setKeysToStorage = (id, keys) => {
-            localStorage.setItem(id, keys);
-        }
-
-        function onMessageSubmit() {
-            let msg = document.getElementById("message");
-            if (msg.value === "/call") {
-                msg.value = "";
-                pushMessage("info: vous êtes sur le point de passer un appel audio." +
-                    " Cette fonctionnalité est encore en développement", "info");
-                pushMessage("info: veuillez patienter, nous connectons les pairs entre eux. Celà peut prendre quelques secondes", "info");
-                startCall();
-                return;
-            }
-
-            if (msg.value.startsWith("/usekeys")) {
-                console.log("crypto", msg.value);
-                let args = msg.value.split(' ');
-                loadKeys(args[1], args[2]).then(() => {
-                    pushMessage(`info: you are currently using cryptography with ${args[1]}'s keys`, "info");
-                }).catch((err) => {
-                    console.error(err);
-                    pushMessage(`info: cannot load keys`, "info");
-                });
-                msg.value = "";
-                pushMessage(`info: loading ${args[1]}'s keys`, "info");
-                return;
-            }
-
-            send(msg.value);
-            pushMessage(`moi: ${msg.value}`);
-            msg.value = "";
-        }
-
-        const outputView = document.getElementById("outputView");
-
-        function pushMessage(msg, opt) {
-            let newDiv = document.createElement('li');
-            newDiv.innerText = msg;
-            if (opt) {
-                if (opt.data) {
-                    newDiv.className = opt.data.className;
-                    newDiv.data = data;
-                }
-            }
-            outputView.appendChild(newDiv);
-        }
-
-
-        setOnMessages((/** @type { ChatMessage } */ message) => {
-            pushMessage(`${message.nickname}: ${message.content}`, {
-                data: {
-                    epubkey: message.epubkey,
-                    pubkey: message.pubkey,
-                }
-            });
-        });
-
-        let status = 0; // idle
-
-        onPrepareWsProposal = () => {
-            document.getElementById("connectionForm").style.display = "none";
-            document.getElementById("roomView").style.display = "inline-block";
-            pushMessage("info: recherche du salon", { className: "info" });
-            pushMessage(`info: vous pouvez passer des appels vocaux avec vos collaborateurs \
-            en utilisant la commande '/call', cette fonctionnalité est encore en phase de test`, { className: "info" });
-        };
-
-        onSendWsProposal = () => {
-            if (status != 1)
-                pushMessage("info: attente des participants", { className: "info" });
-        };
-
-        /** Afficher que le client est connecté */
-        function activateRoom() {
-            pushMessage("info: vous êtes connecté", { className: "info" });
-            document.getElementById("message").disabled = false;
-        }
-
-        onConnectionToRoomDone = () => {
-            if (status != 1) {
-                activateRoom();
-                status = 1;
-            }
-        };
-
-        onWsProposalAnswerOpened = () => {
-            if (status != 1) {
-                activateRoom();
-                status = 1;
-            }
-        };
-
-        userAcceptCall = (pseudo, callback) => {
-            if (userAcceptCall.accepted) {
-                callback();
-            } else if (userAcceptCall.data[pseudo] === undefined) {
-                userAcceptCall.data[pseudo] = true;
-                let button = document.createElement('button');
-                button.innerHTML = "Accepter les appels entrant de " + pseudo;
-                button.onclick = () => {
-                    userAcceptCall.accepted = true;
-                    callback();
-                    button.remove();
-                    pushMessage("info: vous avez accepté les appels entrants", { className: "info" });
-                }
-                outputView.append(button);
-            }
-        };
-
-        userAcceptCall.data = {};
-
-        getAudioElt = (label) => {
-            console.log("create audio elt");
-            let audio = document.createElement('audio');
-            let mute = document.createElement('button');
-            let volume = document.createElement('input');
-            let pseudo = document.createElement('p');
-            pseudo.innerHTML = label;
-            let ctnr = document.createElement('div');
-            volume.type = "range";
-            volume.max = 100;
-            volume.value = 100;
-            audio.autoplay = true;
-            let play = true;
-            mute.onclick = () => {
-                if (play) {
-                    console.log("pause");
-                    audio.pause();
-                    play = false;
-                } else {
-                    audio.play().then(() => console.log("play"));
-                    play = true;
-                }
-            };
-            volume.oninput = (e) => {
-                audio.volume = e.target.value / 100;
-            };
-            mute.innerText = "mute";
-            ctnr.appendChild(pseudo);
-            ctnr.appendChild(audio);
-            ctnr.appendChild(mute);
-            ctnr.appendChild(volume);
-            outputView.appendChild(ctnr);
-            return audio;
-        };
-
-        window.onload = () => {
-            console.log("on load")
-            const params = new URLSearchParams(window.location.search);
-            if (params) {
-                let serverValue = "wss://adalrozin.xyz:8532";
-                console.log("params", params)
-                if (params.get("room")) {
-                    console.log("join")
-                    join(params.get("room"), serverValue);
-                }
-            }
-        };
-    </script>
+    <script src="zizani.js"></script>
+    <script src="front.js"></script>
 </body>
 
 </html>
