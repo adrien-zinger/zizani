@@ -150,7 +150,6 @@ onSendWsProposal = () => {
 /** Afficher que le client est connecté */
 function activateRoom() {
     pushMessage("info: vous êtes connecté", { className: "info" });
-    document.getElementById("message").disabled = false;
 }
 
 onConnectionToRoomDone = () => {

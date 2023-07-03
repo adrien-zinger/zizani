@@ -48,6 +48,7 @@
 
         html {
             overflow: hidden;
+            max-height: 80vh;
             overscroll-behavior: none;
         }
 
@@ -124,7 +125,7 @@
 
     <div id="roomView">
         <ul id="outputView"></ul>
-        <form id="messageForm">
+        <form id="messageForm" onsubmit="onMessageSubmit(); return false;">
             <textarea rows="3" id="messageTextArea" autocomplete="off"
                 onkeydown="onWriting(arguments[0], this)"></textarea>
             <input id="messageSubmit" type="submit" value="Entrer" />
