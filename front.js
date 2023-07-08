@@ -24,6 +24,9 @@ function onWriting(e, _input) {
     }
 }
 
+/**
+ * Event when the user is on the login page and he press enter.
+ *  */
 function submitJoinRoom() {
     let roomElt = document.getElementById("room");
     let serverElt = document.getElementById("server");
@@ -35,11 +38,14 @@ function submitJoinRoom() {
         return;
     }
     let pseudo = document.getElementById("pseudo");
-    if (pseudo.value !== "")
+    // Take nickname, save it into local storage.
+    if (pseudo.value !== "") {
         setNickName(pseudo.value);
+        localStorage.setItem("nickname", pseudo.value);
+    }
     // Change url to keep current room and pseudo even
     // after a refresh.
-    window.history.replaceState(
+    window.history.pushState(
         null,
         "",
         `${window.location.href}?room=${roomElt.value}`
@@ -119,7 +125,6 @@ function pushMessage(msg, opt) {
     }
     outputView.appendChild(newDiv);
 }
-
 
 setOnMessages((/** @type { ChatMessage } */ message) => {
     pushMessage(`${message.nickname}: ${message.content}`, {
@@ -223,13 +228,23 @@ getAudioElt = (label) => {
 window.onload = () => {
     console.log("on load")
     const params = new URLSearchParams(window.location.search);
+    const nickname = localStorage.getItem("nickname");
+    // Set nickname and if we are on the first page, set the
+    // pseudo value too.
+    if (nickname) {
+        setNickName(nickname);
+        const pseudo = window.getElementById("pseudo");
+        if (pseudo) {
+            pseudo.value = nickname;
+        }
+    }
     if (params) {
+        // TODO: manage other servers.
         let serverValue = "wss://adalrozin.xyz:8532";
         console.log("params", params)
         if (params.get("room")) {
             console.log("join")
             join(params.get("room"), serverValue);
         }
-        // TODO: load pseudo from cache
     }
 };
