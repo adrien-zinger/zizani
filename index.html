@@ -56,7 +56,8 @@
             position: relative;
             z-index: 1;
             background: #FFFFFF;
-            margin: 0 0 100px 0;
+            margin: auto;
+            max-width: 600px;
             padding: 45px;
             box-shadow: 0 0 20px 0 rgba(0, 0, 0, 0.2), 0 5px 5px 0 rgba(0, 0, 0, 0.24);
         }
@@ -117,9 +118,10 @@
 
 <body>
     <form id="connectionForm" onsubmit="submitJoinRoom(); return false;">
-        <input id="pseudo" type="text" placeholder="anonymous" />
-        <input id="room" type="text" placeholder="salon de discussion" />
-        <input type="submit" value="connexion" />
+        <input id="pseudo" type="text" placeholder="Nickname (default anonymous)" />
+        <input id="room" type="text" placeholder="Discussion room" />
+        <input type="button" value="Random room" onclick="randomRoomConnection()" />
+        <input type="submit" value="Connect" />
         <button id="more" onclick="addOptions(); return false;">options</button>
     </form>
 

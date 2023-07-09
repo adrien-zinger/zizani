@@ -4,7 +4,7 @@ function addOptions() {
         let server = document.createElement('input');
         server.type = "text";
         server.id = "server"
-        server.placeholder = "chemin (optionnel)";
+        server.placeholder = "private server (optionnal)";
         document.getElementById('connectionForm').appendChild(server);
         addOptions.value = server;
     } else {
@@ -34,7 +34,7 @@ function submitJoinRoom() {
     if (serverElt !== null && serverElt.value === "")
         serverValue = serverElt.value;
     if (roomElt.value === "") {
-        alert("Renseigner le salon est indispensable");
+        alert("Please enter a room name");
         return;
     }
     let pseudo = document.getElementById("pseudo");
