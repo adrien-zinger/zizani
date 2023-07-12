@@ -207,7 +207,7 @@ async function loadKeys(id, password) {
  * @property {string} nickname
  * @property {string | undefined} signature
  * @property {string | undefined} pubkey
- * @property {string | undefined} epubkey
+ * @property {string | undefined} cryptoKey
  */
 
 const messagesReceived = {};
@@ -345,9 +345,12 @@ function str2ab(str) {
 }
 
 /**
-* @param {ChatMessage} message
-* @returns {Promise<boolean>}
-*/
+ * Check if a signed message has a valid signature and content. The
+ * message input require to have a `pubkey` and a `signature`.
+ * 
+ * @param {ChatMessage} message
+ * @returns {Promise<boolean>}
+ */
 async function verifyMessage(message) {
     let pubkeyStr = atob(message.pubkey);
     let pubkeyBuffer = str2ab(pubkeyStr);
@@ -384,35 +387,40 @@ function onMessageReceived(chatMessage, currChannel) {
         return;
     }
 
-    if (currData.crypto) {
+    async function checkCryptoData() {
         if (chatMessage.pubkey !== undefined &&
             chatMessage.signature !== undefined) {
-            verifyMessage(chatMessage).then(res => console.log("verified" + res));
+            return await verifyMessage(chatMessage);
         } else if (chatMessage.pubkey === undefined &&
             chatMessage.signature === undefined) {
+            return undefined;
             // nothing to do
         } else {
             console.log("strange behaviour behind the message " + chatMessage.id);
             banPeerByChannelId(currChannel.id);
+            return false;
         }
     }
 
-    console.log(chatMessage);
-    onMessageIncoming(chatMessage);
-    messagesReceived[chatMessage.id] = chatMessage;
-    /** @type {[]} */
-    let channelsIdsThatKnow = messagesInfo.channelsKnowId(chatMessage.id);
-    messagesInfo.delete(chatMessage.id);
+    checkCryptoData().then(res => {
+        console.log(chatMessage);
+        onMessageIncoming(chatMessage.verified = res);
 
-    // Une fois reçu, je peux forward à tout mon entourage
-    // l'id du message.
-    peerConnections.forEach(pc => {
-        if (channelsIdsThatKnow.includes(pc.channel.id)) return;
-        const msg = {
-            path: rootMessageIdentifier,
-            args: chatMessage.id,
-        };
-        pc.channel.send(JSON.stringify(msg));
+        messagesReceived[chatMessage.id] = chatMessage;
+        /** @type {[]} */
+        let channelsIdsThatKnow = messagesInfo.channelsKnowId(chatMessage.id);
+        messagesInfo.delete(chatMessage.id);
+
+        // Une fois reçu, je peux forward à tout mon entourage
+        // l'id du message.
+        peerConnections.forEach(pc => {
+            if (channelsIdsThatKnow.includes(pc.channel.id)) return;
+            const msg = {
+                path: rootMessageIdentifier,
+                args: chatMessage.id,
+            };
+            pc.channel.send(JSON.stringify(msg));
+        });
     });
 }
 
@@ -523,7 +531,7 @@ function sendPrivMessage(nickname, key, content) {
     // encryptées. Par ailleurs, on peut importer un wallet sous format clair en json
     // et encrypté par un mot de passe.
 
-    // - [ ] activer desactiver la feature crypto (les clefs sont générées si aucune n'est presente à l'activation)
+    // - [x] activer desactiver la feature crypto (les clefs sont générées si aucune n'est presente à l'activation)
     // - [ ] enregistrer des clefs utilisateur
     // - [ ] envoyer un message privé à une personne.
     // - [ ] modifier le system d'appel, les offres sont propagées comme les autres messages.

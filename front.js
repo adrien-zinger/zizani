@@ -118,6 +118,12 @@ function pushMessage(msg, opt) {
     if (opt) {
         if (opt.data) {
             newDiv.data = opt.data;
+            if (data.verified == true) {
+                newDiv.className = "signature_ok"
+                // TODO: add a key button and call `saveMessageKeys` onclick
+            } else if (data.verified == false) {
+                newDiv.className = "signature_nok"
+            }
         }
         if (opt.className) {
             newDiv.className = opt.className;
@@ -126,11 +132,73 @@ function pushMessage(msg, opt) {
     outputView.appendChild(newDiv);
 }
 
+/**
+ * On click to a signed message, we can save his public keys in the local
+ * storage so we can recognize him rather mistake him with another guy with
+ * the same nickname. Moreover, we can now send a private message to him.
+ */
+function saveMessageKeys() {
+    saveMessageKeys.contacts[this.data.peers_keys_id]
+        = peers_keys[this.data.peers_keys_id];
+    localStorage.setItem("peers_keys", JSON.stringify(peers_keys));
+}
+
+/**
+ * It's a temporary container of every peer's keys.
+ */
+const peers_keys = function init_peers_keys() {
+    /* Initialize peers_keys */
+    let ret = localStorage.getItem("peers_keys");
+    if (ret == null) {
+        saveMessageKeys.contacts = {};
+        return {};
+    }
+    saveMessageKeys.contacts = ret;
+    Object.values(ret).forEach(value => value.registred = true);
+    return ret;
+}();
+
+peers_keys.findNickname = (nickname) => {
+    for (k in Object.values(peers_keys)) {
+        if (k.nickname == nickname) {
+            return k;
+        }
+    }
+};
+
+peers_keys.set = (key, value) => {
+    if (peers_keys[key] === undefined) {
+        peers_keys[key] = value;
+        return false;
+    } else if (peers_keys[key].nickname != value.nickname
+        && peers_keys[key].cryptokey == value.cryptokey
+        && peers_keys[key].pubkey == value.pubkey) {
+        if (peers_keys[key].othernames == undefined) {
+            peers_keys[key].othernames = [];
+        }
+        peers_keys[key].othernames.push(value.nickname);
+    }
+    return true;
+};
+
 setOnMessages((/** @type { ChatMessage } */ message) => {
-    pushMessage(`${message.nickname}: ${message.content}`, {
+    let peers_keys_id = hash(message.pubkey);
+    let known = peers_keys.set(peers_keys_id, {
+        cryptokey: message.cryptokey,
+        pubkey: message.pubkey,
+        nickname: message.nickname,
+    });
+
+    let nickname = known
+            && peers_keys[peers_keys_id].registred
+            && message.nickname != peers_keys[peers_keys_id].nickname
+        ? `${message.nickname} (${peers_keys[peers_keys_id].nickname})`
+        : message.nickname;
+
+    pushMessage(`${nickname}: ${message.content}`, {
         data: {
-            epubkey: message.epubkey,
-            pubkey: message.pubkey,
+            peers_keys_id,
+            verified: message.verified
         }
     });
 });
