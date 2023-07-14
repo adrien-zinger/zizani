@@ -1,3 +1,90 @@
+/*** GLOBAL VARIABLES */
+
+/**
+ * Current information about user and peer
+ */
+const currData = {
+    joining: false,
+    room: '',
+    pathServer: '',
+    nickname: 'anonymous',
+    /* peer id generated on page refresh */
+    peerId: window.crypto.randomUUID(),
+    onMessage(messages) {
+        console.log(messages.pop());
+    },
+    crypto: false,
+    signKeyPair: {
+        /** @type {CryptoKey} */
+        publicKey: undefined,
+        privateKey: undefined
+    },
+    cryptoKeyPair: {
+        /** @type {CryptoKey} */
+        publicKey: undefined,
+        privateKey: undefined
+    },
+    connectedPeerIds: new Set()
+};
+
+const idealPeerConnectionNumber = 20;
+const idealMinimalNumberOfPeers = 5;
+
+const proposalLifeTimeMillis = 10000;
+
+const ceilLimitProposalCreation = 5;
+const idealTTL = 32;
+
+/**
+ * Temporary container of webRTC peer connection offers and answers.
+ * Once the connection is established the connections are moved into
+ * `peerConnections`.
+ * 
+ * 
+ * @see {peerConnections}
+ * */
+const proposalsPeerConnections = [];
+
+/**
+ * Retire la proposition de la liste et renvoie cette proposition.
+ * @param {number} id peer connection id
+ * @returns {import('./peers').PeerConnection | null}
+ */
+proposalsPeerConnections.remove = (id) => {
+    let i = proposalsPeerConnections.findIndex(pc => pc.id == id);
+    if (i == -1) return null;
+    let ret = proposalsPeerConnections[i];
+    for (; i < proposalsPeerConnections.length;) {
+        proposalsPeerConnections[i] = proposalsPeerConnections[++i];
+    }
+    proposalsPeerConnections.pop();
+    return ret;
+};
+
+/**
+ * @typedef {RTCPeerConnection & {channel: RTCDataChannel, id: number}} PeerConnection
+ */
+
+/**
+ * Established and active connections.
+ * @type {Array<PeerConnection>}
+ * */
+const peerConnections = [];
+
+/**
+ * Retire la proposition de la liste et renvoie cette proposition.
+ * @param {number} id peer connection id
+ * @returns {import('./peers').PeerConnection | null}
+ */
+peerConnections.close = (id) => {
+    let i = peerConnections.findIndex(pc => pc.id == id);
+    if (i == -1) return null;
+    peerConnections[i].close();
+    for (; i < peerConnections.length;)
+        peerConnections[i] = peerConnections[++i];
+    peerConnections.pop();
+};
+
 /*** CRYPTO IMPLEMENTATION */
 
 function randomInt(max) {
@@ -58,6 +145,11 @@ const genCryptoKeyPair = async () => {
  */
 let getKeysFromStorage = (_id) => { /* to be defined by front end */ };
 let setKeysToStorage = (_id, _keys) => { /* to be defined by front end */ };
+
+/**
+ * Is called when no more connexions are registred.
+ */
+let onPeerConnectionsLost = () => { /* to be defined by front end */ };
 
 function importFromString(key, algo, usage) {
     return window.crypto.subtle.importKey(
@@ -318,11 +410,12 @@ function onMsgIdentifierReceived(id, currChannel) {
 function onMsgRequestReceived(id, currChannel) {
     console.log("message request received");
     const message = messagesReceived[id];
-    if (messagesReceived[id] === undefined) {
-        // Je ferme la connexion si on me demande quelque
-        // chose que je ne connais pas car ça ne devrait pas
-        // arriver.
-        return currChannel.close();
+    if (message === undefined) {
+        /* Je ferme la connexion si on me demande quelque
+         chose que je ne connais pas car ça ne devrait pas
+         arriver. banPeerByChannelId(currChannel.id) TODO: a faire
+         après stabilisation */
+        return;
     }
     const msg = {
         path: rootMessageResponse,
@@ -390,14 +483,20 @@ function onMessageReceived(chatMessage, currChannel) {
     async function checkCryptoData() {
         if (chatMessage.pubkey !== undefined &&
             chatMessage.signature !== undefined) {
-            return await verifyMessage(chatMessage);
+            let res = await verifyMessage(chatMessage);
+            /* TODO: after stabilization of the feature we should ban any channel
+                that send us an invalid message.
+                if (res) banPeerByChannelId(currChannel.id); */
+            return res;
         } else if (chatMessage.pubkey === undefined &&
             chatMessage.signature === undefined) {
             return undefined;
             // nothing to do
         } else {
             console.log("strange behaviour behind the message " + chatMessage.id);
-            banPeerByChannelId(currChannel.id);
+            /* TODO: after stabilization of the feature we should ban any channel
+                that send us an invalid message.
+                banPeerByChannelId(currChannel.id); */
             return false;
         }
     }
@@ -442,7 +541,11 @@ function pullMessage() {
             if (messagesReceived[info.id] !== undefined) {
                 return;
             }
-            banPeerByChannelId(channel.id);
+            setTimeout(() => {
+                console.log("peer failes to return message");
+                /* TODO: when feature stable banPeerByChannelId(channel.id); */
+            }, 10000);
+            
             tryPull();
         }, 200);
     };
@@ -499,7 +602,7 @@ function sendMessage(content) {
             try {
                 pc.channel.send(JSON.stringify(msg));
             } catch {
-                banPeerById(pc.id);
+                peerConnections.close(pc.id);
             }
         });
     }
@@ -692,6 +795,9 @@ async function sendProposalToWSServer(roomName, serverPathUrl, action) {
 }
 
 /**
+ * Join a room. Send a webRTC proposal to a server and keep a websocket
+ * connection with the server since nobody connected.
+ * 
  * Rejoint un salon de discussion et retourne le path server
  * utilisé dans une promesse.
  * @param {string} roomName 
@@ -713,17 +819,12 @@ function addPath(path) {
 
 /*** PEER IMPLEMENTATION */
 
-/**
- * @typedef {RTCPeerConnection & {channel: RTCDataChannel, id: number}} PeerConnection
- */
-
-/** @type {Array<PeerConnection>} */
-const peerConnections = [];
 const peerConnectionCalls = [];
 
 function banPeer(fn) {
     let i = peerConnections.findIndex(fn);
     if (i < 0) return;
+    peerConnections[i].close();
     for (; i < peerConnections.length - 1;)
         peerConnections[i] = peerConnections[++i];
     peerConnections.pop();
@@ -731,10 +832,6 @@ function banPeer(fn) {
 
 function banPeerByChannelId(channelId) {
     banPeer(pc => pc.channel.id == channelId);
-}
-
-function banPeerById(id) {
-    banPeer(pc => pc.id == id);
 }
 
 function closePeers() {
@@ -750,80 +847,47 @@ function closePeers() {
 /**
  * @typedef ConnectionProposal
  * @property {string} id
+ * @property {string} peerId Peer UUID
  * @property {string[]} channels channel's labels path from source of offer to latest.
  * @property {number} ttl Limite d'expiration, decrémente à chaque passage d'un pair à l'autre
  * @property {number} date Date d'expiration. L'offre ou la réponse se fermeront si cette date est dépassée.
  * @property {RTCSessionDescription} content Offre ou réponse sous format text.
  */
 
-const idealPeerConnectionNumber = 20;
-const idealMinimalNumberOfPeers = 5;
-
-const proposalLifeTimeMillis = 10000;
-
-const ceilLimitProposalCreation = 5;
-const idealTTL = 32;
-
-const proposalsPeerConnections = [];
-
 /**
- * Retire la proposition de la liste et renvoie cette proposition.
- * @param {number} id peer connection id
- * @returns {import('./peers').PeerConnection | null}
- */
-function removeProposal(id) {
-    let i = proposalsPeerConnections.findIndex(pc => pc.id == id);
-    if (i == -1) return null;
-    let ret = proposalsPeerConnections[i];
-    for (; i < proposalsPeerConnections.length;) {
-        proposalsPeerConnections[i] = proposalsPeerConnections[++i];
-    }
-    proposalsPeerConnections.pop();
-    return ret;
-};
-
-/**
+ * On received a connection proposal from the mesh. We decide or not to
+ * accept, forward or dismiss it.
+ * 
+ * @see {createConnectionProposals}
+ * @see {onProposalAcceptedReceived}
+ * 
  * @param {RTCDataChannel} currChannel
  * @param {ConnectionProposal} data 
  */
 function onConnectionProposalReceived(data, currChannel, setMessageRooting) {
     console.log("connection proposal received");
+
+    /* Dismiss if Date < now. The data.date is an expiration information.
+        The sender of the proposal would have already removed the proposal */
     if (data.date < Date.now()) return;
 
-    if ((Math.random() > 0.5 || peerConnections.length < idealMinimalNumberOfPeers) &&
-        data.channels.length > 1) {
+    const remotePeerId = data.peerId;
 
+    /* Conditions of acceptance: the peer should be farther than 1 (not a direct connection).
+        If we are not currently connected to the peer (refer to the currData.connectedPeerIds).
+        If we don't have the ideal number of peers connections, we can accept it. Otherwise,
+        we choose randomly to accept or not. */
+    const accept = data.channels.length > 1 && !currData.connectedPeerIds.has(remotePeerId)
+        && (Math.random() > 0.5 || peerConnections.length < idealMinimalNumberOfPeers);
+
+    if (accept) {
         console.log("accept proposal");
         if (peerConnections.length >= idealPeerConnectionNumber) {
-            const oldestConnection = peerConnections.shift();
-            oldestConnection.close();
+            /* Close oldest connection if we overflow maximum
+                idealPeerConnectionNumber */
+            peerConnections.shift().close();
         }
-        createAnswer(JSON.parse(data.content)).then(pcAnswer => {
-            pcAnswer.id = randomInt(99999);
-            proposalsPeerConnections.push(pcAnswer);
-
-            const expirationTimeout = setTimeout(() => {
-                pcAnswer.close();
-                removeProposal(pcAnswer.id);
-            }, data.date - Date.now());
-
-            pcAnswer.ondatachannel = e => {
-                clearTimeout(expirationTimeout);
-                setMessageRooting(pcAnswer, e.channel);
-                e.channel.onclose = _ => createProposals(setMessageRooting);
-                removeProposal(pcAnswer.id);
-                peerConnections.push(pcAnswer);
-            };
-
-            data.channels.pop();
-            data.content = JSON.stringify(pcAnswer.localDescription);
-
-            const msg = {
-                path: rootProposalAccepted,
-                args: data,
-            };
-            currChannel.send(JSON.stringify(msg));
-        });
+        acceptProposal().then(console.log("accepted proposal sent"));
     } else if (--data.ttl > 0 && peerConnections.length >= 2) {
         console.log("refuse proposal");
         data.channels.push(currChannel.label);
@@ -840,8 +904,57 @@ function onConnectionProposalReceived(data, currChannel, setMessageRooting) {
         try {
             peerConnections[rand].channel.send(JSON.stringify(msg));
         } catch {
-            banPeerById(peerConnections[rand].id);
+            peerConnections.clise(peerConnections[rand].id);
         }
+    }
+
+    /**
+     * Accept the proposal. The remote will possibly enter in the
+     * `onProposalAcceptedReceived` function.
+     * 
+     * @see {onProposalAcceptedReceived}
+     */
+    async function acceptProposal() {
+        const answer = await createAnswer(JSON.parse(data.content));
+        const id = randomInt(99999); /* TODO: replace with UUID */
+        answer.id = id;
+        proposalsPeerConnections.push(answer);
+
+        /* Remove the answer once the original proposal has expired */
+        const expirationTimeout = setTimeout(() => {
+            answer.close();
+            proposalsPeerConnections.remove(id);
+        }, data.date - Date.now());
+
+        /* On data channel, this means that we're connected to the
+            remote peer */
+        answer.ondatachannel = e => {
+            clearTimeout(expirationTimeout);
+            setMessageRooting(answer, e.channel);
+            currData.connectedPeerIds.add(remotePeerId);
+            e.channel.onclose = _ => {
+                console.log(`peer connection ${id} close`);
+                peerConnections.close(id);
+                if (peerConnections.length == 0) {
+                    onPeerConnectionsLost();
+                }
+
+                currData.connectedPeerIds.remove(remotePeerId);
+                createConnectionProposals(setMessageRooting);
+            };
+            proposalsPeerConnections.remove(id);
+            peerConnections.push(answer);
+        };
+
+        data.peerId = currData.peerId;
+        data.channels.pop();
+        data.content = JSON.stringify(answer.localDescription);
+
+        const msg = {
+            path: rootProposalAccepted,
+            args: data,
+        };
+        currChannel.send(JSON.stringify(msg));
     }
 }
 
@@ -852,11 +965,18 @@ function onConnectionProposalReceived(data, currChannel, setMessageRooting) {
  */
 function onProposalAcceptedReceived(data) {
     console.log("enter on proposal accepted");
-    if (data.date < Date.now()) return;
+    if (data.date < Date.now() || currData.connectedPeerIds.has(data)) {
+        return;
+    }
     const peerConn = removeProposal(data.id);
     if (peerConn) {
         peerConn.setRemoteDescription(JSON.parse(data.content)).then(() => {
             console.log("proposal success");
+            currData.connectedPeerIds.add(data);
+            /* ??? peut être ajouter ici un mechanisme de promesse. Car il
+                serait préférable que ça soit fait lorsque le channel s'ouvre.
+                Celà dit, ça peut fonctionner, et c'est simple comme ça,
+                alors attendont de voir si c'est stable */
         });
         return;
     }
@@ -912,12 +1032,35 @@ function onCallProposalAccepted(data) {
     });
 }
 
-/**
- * Créer et envoie de nouvelles propositions de connection dans le réseau
- * si besoin.
+/** 
+ * Creates and send new propositions of webRTC connections into the mesh
+ * through current connections.
+ * 
+ * ---
+ * Créé et envoie de nouvelles propositions de connection dans le réseau
+ * via les connections webRTC existantes.
+ * 
+ * @see {onConnectionProposalReceived}
+ * @see {onProposalAcceptedReceived}
  */
-async function createProposals(setMessageRooting) {
+async function createConnectionProposals(setMessageRooting) {
     console.log("enter create proposals");
+
+    /* If a call too that function is already programmed, cancel it
+        and process the function */
+    if (createConnectionProposals.nextTimeout !== undefined) {
+        /* ??? is it really what it does? Does the below line break that
+            assumption?
+            let newPeerConnections = await Promise.all(creations);
+        */
+        clearTimeout(createConnectionProposals.nextTimeout);
+    }
+
+    if (peerConnections.length == 0) {
+        console.log("no peers connected - cancel peer connexion proposals");
+        return;
+    }
+
     if (peerConnections.length >= idealPeerConnectionNumber) return;
 
     // On commence par la création d'un nombre de proposition, on ne doit
@@ -929,29 +1072,28 @@ async function createProposals(setMessageRooting) {
             - peerConnections.length
             - proposalsPeerConnections.length)
     ), ceilLimitProposalCreation);
+
     let creations = [];
     for (let i = 0; i < proposalsNumber; ++i) {
         creations.push(createOffer());
     }
+
     /** @type {Array<PeerConnection>} */
     let newPeerConnections = await Promise.all(creations);
 
     // Pour chaque proposition, on incrémente un compteur, on initialise sa
     // durée de vie, son enregistrement quand il est ouvert, etc.
-    if (peerConnections.length == 0) {
-        return;
-    }
-    const currPCLength = peerConnections.length - 1;
-    newPeerConnections.forEach((/** @type {PeerConnection} */ pc) => {
-        pc.id = randomInt(99999);
+    
+    for (/** @type {PeerConnection} */ pc in newPeerConnections) {
+        
+        pc.id = randomInt(99999); /* TODO: use UUID */
 
-        let rand = randomInt(currPCLength);
-        let guard = 100;
-
-        while (peerConnections[rand] === undefined) {
-            rand = randomInt(currPCLength);
-            if (guard-- == 0) return; // TODO: return an error
+        if (peerConnections.length == 0) {
+            console.log("no peers connected - cancel");
+            return;
         }
+        
+        let rand = randomInt(peerConnections.length - 1);
 
         const msg = {
             path: rootConnectionProposal,
@@ -960,6 +1102,7 @@ async function createProposals(setMessageRooting) {
                 content: JSON.stringify(pc.localDescription),
                 date: Date.now() + proposalLifeTimeMillis,
                 id: pc.id,
+                peerId: currData.peerId,
                 ttl: idealTTL,
             }
         };
@@ -969,7 +1112,10 @@ async function createProposals(setMessageRooting) {
             removeProposal(pc.id);
         }, proposalLifeTimeMillis);
 
+        /* On channel openned, it means that the connection is
+            established */
         pc.channel.onopen = _ => {
+            console.log("proposal connection success, channel open", channel.id);
             clearTimeout(expirationTimeout);
             setMessageRooting(pc, pc.channel);
             peerConnections.push(pc);
@@ -979,9 +1125,12 @@ async function createProposals(setMessageRooting) {
         proposalsPeerConnections.push(pc);
         console.log("send proposal");
         peerConnections[rand].channel.send(JSON.stringify(msg));
-    });
+    }
 
-    setTimeout(_ => createProposals(setMessageRooting), 30000);
+    createConnectionProposals.nextTimeout = setTimeout(_ => {
+        createConnectionProposals.nextTimeout = undefined;
+        createConnectionProposals(setMessageRooting), 30000
+    });
 }
 
 /*** CONSTANTS */
@@ -1118,7 +1267,11 @@ async function createAnswerWithAudio(offer) {
 }
 
 /**
- * Créer une nouvelle offre et la retourne en 500ms environ.
+ * Creates a new offer and return it once it's valid for a remote connexion.
+ * ---
+ * Créé une nouvelle offre et la retourne dès qu'elle est valide pour une connexion
+ * de l'exterieur.
+ * 
  * @return {Promise<RTCPeerConnection>}
  */
 async function createOffer() {
@@ -1193,27 +1346,6 @@ async function createOfferWithAudio() {
 
 /*** LIB IMPLEMENTATION */
 
-const currData = {
-    joining: false,
-    room: '',
-    pathServer: '',
-    nickname: 'anonymous',
-    onMessage(messages) {
-        console.log(messages.pop());
-    },
-    crypto: false,
-    signKeyPair: {
-        /** @type {CryptoKey} */
-        publicKey: undefined,
-        privateKey: undefined
-    },
-    cryptoKeyPair: {
-        /** @type {CryptoKey} */
-        publicKey: undefined,
-        privateKey: undefined
-    }
-};
-
 /**
  * Send a message 
  * @param {string} msg 
@@ -1237,7 +1369,7 @@ async function join(room, srv) {
     currData.joining = false;
 
     console.log("create proposal");
-    createProposals((peerConnection, channel) => {
+    createConnectionProposals((peerConnection, channel) => {
         peerConnection.channel = channel;
         channel.onmessage = onRTCChannelMessage;
     });
