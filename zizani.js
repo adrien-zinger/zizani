@@ -503,7 +503,8 @@ function onMessageReceived(chatMessage, currChannel) {
 
     checkCryptoData().then(res => {
         console.log(chatMessage);
-        onMessageIncoming(chatMessage.verified = res);
+        chatMessage.verified = res;
+        onMessageIncoming(chatMessage);
 
         messagesReceived[chatMessage.id] = chatMessage;
         /** @type {[]} */
@@ -1084,8 +1085,7 @@ async function createConnectionProposals(setMessageRooting) {
     // Pour chaque proposition, on incrémente un compteur, on initialise sa
     // durée de vie, son enregistrement quand il est ouvert, etc.
     
-    for (/** @type {PeerConnection} */ pc in newPeerConnections) {
-        
+    for (/** @type {PeerConnection} */ pc of newPeerConnections) {
         pc.id = randomInt(99999); /* TODO: use UUID */
 
         if (peerConnections.length == 0) {
@@ -1108,12 +1108,13 @@ async function createConnectionProposals(setMessageRooting) {
         };
 
         const expirationTimeout = setTimeout(() => {
-            pc.close();
-            removeProposal(pc.id);
+            /* pc.close();
+            removeProposal(pc.id); */
         }, proposalLifeTimeMillis);
 
         /* On channel openned, it means that the connection is
             established */
+        console.log(pc);
         pc.channel.onopen = _ => {
             console.log("proposal connection success, channel open", channel.id);
             clearTimeout(expirationTimeout);

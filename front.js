@@ -123,10 +123,10 @@ function pushMessage(msg, opt) {
     if (opt) {
         if (opt.data) {
             newDiv.data = opt.data;
-            if (data.verified == true) {
+            if (opt.data.verified == true) {
                 newDiv.className = "signature_ok"
                 // TODO: add a key button and call `saveMessageKeys` onclick
-            } else if (data.verified == false) {
+            } else if (opt.data.verified == false) {
                 newDiv.className = "signature_nok"
             }
         }
@@ -188,12 +188,17 @@ peers_keys.set = (key, value) => {
 };
 
 setOnMessages((/** @type { ChatMessage } */ message) => {
-    let peers_keys_id = hash(message.pubkey);
-    let known = peers_keys.set(peers_keys_id, {
-        cryptokey: message.cryptokey,
-        pubkey: message.pubkey,
-        nickname: message.nickname,
-    });
+
+    let known = false;
+    let peers_keys_id = undefined;
+    if (message.verified) {
+        peers_keys_id = hash(message.pubkey);
+        known = peers_keys.set(peers_keys_id, {
+            cryptokey: message.cryptokey,
+            pubkey: message.pubkey,
+            nickname: message.nickname,
+        });
+    }
 
     let nickname = known
             && peers_keys[peers_keys_id].registred
