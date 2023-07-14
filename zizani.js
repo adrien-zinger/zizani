@@ -7,7 +7,7 @@ const currData = {
     joining: false,
     room: '',
     pathServer: '',
-    nickname: 'anonymous',
+    nickname: 'luc',
     /* peer id generated on page refresh */
     peerId: window.crypto.randomUUID(),
     onMessage(messages) {

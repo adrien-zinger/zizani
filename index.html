@@ -13,9 +13,9 @@
 
         ul {
             /* outputView */
-            height: 88%;
+            height: calc(100vh - 60px);
             width: 100%;
-            overflow: auto;
+            overflow: scroll;
             margin: 0;
             padding: 0;
         }
@@ -53,6 +53,7 @@
         }
 
         #connectionForm {
+            display: none;
             position: relative;
             z-index: 1;
             background: #FFFFFF;
@@ -97,21 +98,35 @@
             width: inherit;
             margin: 0 0;
             position: absolute;
-            /* also temporary, I need to compute dynamically the bottom for mobile) */
-            bottom: 10vh;
             left: 0;
+            left: 0;
+            bottom: 0;
+            padding-bottom: 10px;
+            padding-top: 10px;
+            background-color: beige;
+            border: solid 1px silver
         }
 
         #messageTextArea {
             width: inherit;
             font-size: 13px;
             resize: none;
+            height: 40px;
+            font-size: 13px;
+            resize: none;
+            box-sizing: border-box;
+            -moz-box-sizing: border-box;
+            -webkit-box-sizing: border-box;
+            width: calc(100% - 70px);
+            padding: 10px;
+            margin: 0px 20px;
+            border: solid 1px silver;
         }
 
         #messageSubmit {
             position: absolute;
-            right: 10px;
-            bottom: 15px;
+            right: 15px;
+            bottom: 0px;
         }
     </style>
 </header>
@@ -126,11 +141,14 @@
     </form>
 
     <div id="roomView">
+
         <ul id="outputView"></ul>
         <form id="messageForm" onsubmit="onMessageSubmit(); return false;">
             <textarea rows="3" id="messageTextArea" autocomplete="off"
                 onkeydown="onWriting(arguments[0], this)"></textarea>
-            <input id="messageSubmit" type="submit" value="Entrer" />
+            <button id="messageSubmit" type="submit" style="border: 0; background: transparent">
+                <img src="icons8-send-button-24.png" width="20" height="20" alt="submit" />
+            </button>
         </form>
     </div>
 

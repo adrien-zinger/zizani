@@ -82,6 +82,11 @@ setKeysToStorage = (id, keys) => {
 
 function onMessageSubmit() {
     let msg = document.getElementById("messageTextArea");
+
+    if (msg.value === "") {
+        return;
+    }
+
     if (msg.value === "/call") {
         msg.value = "";
         pushMessage("info: vous êtes sur le point de passer un appel audio." +
@@ -106,7 +111,7 @@ function onMessageSubmit() {
     }
 
     send(msg.value);
-    pushMessage(`moi: ${msg.value}`);
+    pushMessage(`${currData.nickname}: ${msg.value}`);
     msg.value = "";
 }
 
@@ -130,6 +135,7 @@ function pushMessage(msg, opt) {
         }
     }
     outputView.appendChild(newDiv);
+    outputView.scrollTo(0, outputView.scrollHeight);
 }
 
 /**
@@ -296,12 +302,19 @@ getAudioElt = (label) => {
 window.onload = () => {
     console.log("on load")
     const params = new URLSearchParams(window.location.search);
-    const nickname = localStorage.getItem("nickname");
+    let nickname = localStorage.getItem("nickname");
     // Set nickname and if we are on the first page, set the
     // pseudo value too.
-    if (nickname) {
+    if (params && params.get("nickname")) {
+        let nickname = params.get("nickname");
         setNickName(nickname);
-        const pseudo = window.getElementById("pseudo");
+        const pseudo = document.getElementById("pseudo");
+        if (pseudo) {
+            pseudo.value = nickname;
+        }
+    } else if (nickname) {
+        setNickName(nickname);
+        const pseudo = document.getElementById("pseudo");
         if (pseudo) {
             pseudo.value = nickname;
         }
@@ -313,6 +326,8 @@ window.onload = () => {
         if (params.get("room")) {
             console.log("join")
             join(params.get("room"), serverValue);
+            return;
         }
     }
+    document.getElementById("connectionForm").style.display = "block";
 };
