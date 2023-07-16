@@ -1,4 +1,6 @@
 const outputView = document.getElementById("outputView");
+const messageTextArea = document.getElementById("messageTextArea");
+const messageSubmit = document.getElementById("messageSubmit");
 
 /* Expands the connection form */
 function addOptions() {
@@ -17,13 +19,19 @@ function addOptions() {
 
 onWriting.state = "textinput";
 
-function onWriting(e, _input) {
+function onWriting(e) {
     const keyCode = e.which || e.keyCode;
     // 13 represents the Enter key
     if (keyCode === 13 && !e.shiftKey) {
         e.preventDefault();
         onMessageSubmit();
     }
+    console.log(messageTextArea.value.length > 0);
+    messageSubmit.className = messageTextArea.value.length > 0 ? "send" : ""; 
+}
+
+function onKeyUp() {
+    messageSubmit.className = messageTextArea.value.length > 0 ? "send" : ""; 
 }
 
 /**
@@ -145,20 +153,17 @@ function executeCommand(msg) {
 }
 
 function onMessageSubmit() {
-    let msg = document.getElementById("messageTextArea");
-
-    if (msg.value.length == 0) {
+    if (messageTextArea.value.length == 0) {
         return;
     }
-
-    if (msg.value[0] == "/") {
-        executeCommand(msg);
+    if (messageTextArea.value[0] == "/") {
+        executeCommand(messageTextArea);
     } else {
-        send(msg.value);
-        pushMessage(`${currData.nickname}: ${msg.value}`);
+        send(messageTextArea.value);
+        pushMessage(`${currData.nickname}: ${messageTextArea.value}`);
     }
 
-    msg.value = "";
+    messageTextArea.value = "";
 }
 
 function pushMessage(msg, opt) {
@@ -230,7 +235,7 @@ function proposeToSaveContact() {
     if (peer) {
         if (addContact.contacts[this.data] === undefined) {
             pushMessage("Press enter to validate the command", { className: "info" });
-            document.getElementById("messageTextArea").value = `/addcontact ${peer.nickname} ${this.data}`;
+            messageTextArea.value = `/addcontact ${peer.nickname} ${this.data}`;
         } else {
             pushMessage(`info: user ${peer.nickname} is already registred in you local contacts`, { className: "info" });
         }

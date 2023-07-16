@@ -3,20 +3,23 @@
 
 <header>
     <style>
+        html {
+            background: linear-gradient(135deg, #8a8a8a, #111);
+        }
+
         body {
             overscroll-behavior: contain;
             width: 100vw;
-            /* temporary, I want to compute dynamically the height for the nexts steps */
-            height: 80vh;
-            margin: 0px 8px;
+            margin: 0px;
+            background: linear-gradient(to bottom, #f7f7f7, #f3faffde), url(grainy.svg);
         }
 
         ul {
             /* outputView */
+            margin: 0px 8px;
             height: calc(100vh - 60px);
             width: 100%;
             overflow: scroll;
-            margin: 0;
             padding: 0;
         }
 
@@ -103,8 +106,8 @@
             bottom: 0;
             padding-bottom: 10px;
             padding-top: 10px;
-            background-color: silver;
-            border: solid 1px rgb(168, 168, 168)
+            box-shadow: 4px -19px 4px -11px rgba(0, 0, 0, 0.1);
+            background-color: #f9f9f9;
         }
 
         #messageTextArea {
@@ -112,6 +115,7 @@
             font-size: 13px;
             resize: none;
             height: 40px;
+            border-radius: 2px;
             font-size: 13px;
             resize: none;
             box-sizing: border-box;
@@ -126,7 +130,18 @@
         #messageSubmit {
             position: absolute;
             right: 15px;
-            bottom: 0px;
+            bottom: 14px;
+        }
+
+        #messageSubmit img {
+            filter: invert(61%) sepia(0%) saturate(5976%) hue-rotate(243deg) brightness(75%) contrast(86%);
+            content: url("icons8-send-button-24.png");
+            width: 20px;
+            height: 20px;
+        }
+
+        #messageSubmit.send img {
+            filter: invert(55%) sepia(104%) saturate(4299%) hue-rotate(354deg) brightness(68%) contrast(201%) !important;
         }
 
         li.signatureOk {
@@ -178,10 +193,10 @@
 
         <ul id="outputView"></ul>
         <form id="messageForm" onsubmit="onMessageSubmit(); return false;">
-            <textarea rows="3" id="messageTextArea" autocomplete="off"
-                onkeydown="onWriting(arguments[0], this)"></textarea>
+            <textarea rows="3" id="messageTextArea" autocomplete="off" onkeydown="onWriting(arguments[0])"
+                onkeyup="onKeyUp()"></textarea>
             <button id="messageSubmit" type="submit" style="border: 0; background: transparent">
-                <img src="icons8-send-button-24.png" width="20" height="20" alt="submit" />
+                <img alt="submit" />
             </button>
         </form>
     </div>
