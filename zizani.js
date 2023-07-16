@@ -255,6 +255,50 @@ async function decrypt(str, password) {
     return new TextDecoder().decode(dec);
 }
 
+/**
+ * Encrypt function
+ * @param {string} str 
+ * @param {string} password
+ * @returns {Promise<string>}
+ */
+async function encryptWithKey(str, key) {
+    // get encrypted buffer
+    let buf = await window.crypto.subtle.encrypt(
+        cryptoAlgo,
+        key,
+        new TextEncoder().encode(str)
+    );
+
+    let cipherText = btoa(String.fromCharCode.apply(null, new Uint8Array(buf)));
+
+    return JSON.stringify({
+        cipherText,
+        iv: btoa(String.fromCharCode.apply(null, algo.iv))
+    });
+}
+
+/**
+ * Decrypt function
+ * @param {string} str 
+ * @param {string} password
+ * @returns {Promise<string>}
+ */
+async function decryptWithLocalKey(str) {
+    if (currData.cryptoKeyPair === undefined) {
+        console.warning("no keys to decrypt the content")
+        return;
+    }
+    let encrypted = JSON.parse(str);
+
+    let cipherText = str2ab(atob(encrypted.cipherText));
+    let dec = await window.crypto.subtle.decrypt(
+        cryptoAlgo,
+        currData.cryptoKeyPair.privateKey,
+        cipherText
+    );
+    return new TextDecoder().decode(dec);
+}
+
 async function loadKeys(id, password) {
     let keys = getKeysFromStorage(id);
     if (keys !== undefined) {
@@ -502,7 +546,16 @@ function onMessageReceived(chatMessage, currChannel) {
     checkCryptoData().then(res => {
         console.log(chatMessage);
         chatMessage.verified = res;
-        onMessageIncoming(chatMessage);
+
+        /* If message content is an object, if he contains a `to` property
+            decrypt the message */
+        if (chatMessage.content.to == currData.nickname) {
+            decryptWithLocalKey(chatMessage.content.data).then((content) => {
+                onMessageIncoming(Object.create(chatMessage, { content }));
+            }).catch(() => console.warn("failed to decrypt message"));
+        } else {
+            onMessageIncoming(chatMessage);
+        }
 
         messagesReceived[chatMessage.id] = chatMessage;
         /** @type {[]} */
@@ -519,6 +572,8 @@ function onMessageReceived(chatMessage, currChannel) {
             };
             pc.channel.send(JSON.stringify(msg));
         });
+    }).catch(() => {
+        console.warn("message received error detected");
     });
 }
 
@@ -575,7 +630,7 @@ async function signMessage(id, message, date) {
     return btoa(signBin);
 }
 
-function sendMessage(content) {
+function sendMessage(content, priv) {
     const timestamp = Date.now();
 
     /** @type {ChatMessage} */
@@ -586,7 +641,13 @@ function sendMessage(content) {
         nickname: currData.nickname,
     };
 
-    async function _send(message) {
+    async function _send() {
+        if (priv) {
+            message.content = {
+                to: nickname,
+                data: await encryptWithKey(content, key)
+            };
+        }
         if (currData.crypto) {
             message.signature = await signMessage(message.id, content, timestamp);
             message.pubkey = currData.signKeyPair.publicKey,
@@ -606,37 +667,8 @@ function sendMessage(content) {
         });
     }
 
-    _send(message).then(console.log(`message id ${message.id} sent`));
-}
-
-function sendPrivMessage(nickname, key, content) {
-    // TODO: quelques descriptions de la roadmap crypto
-
-    //      /priv jean coucou       Envoie un message privé à jean
-    //      /priv /call jean        Celui qui s'appelle jean capable de lire l'offre (et de le prouver)
-    //      /call                   Appel la premiere personne qui veux bien répondre.
-    //      /call jean              N'importe qui se nommant jean, peut être un peu foireu
-    //      /call jean yann         Envoie des offres à jean et yann, jean enverra une offre a yann (ordre de la liste)
-    //      /priv /call jean yann   Comme l'appelle normal, mais les offres sont encryptés et on verrifie les signatures
-
-    // Lorsqu'on reçoie un message signé, on peut enregistrer la signature en
-    // cliquant sur le message. Une fois la signature enregistré on verra le
-    // pseudo actuelle et celui qui à été utilisé pendant l'enregistrement. Si
-    // une personne utilise un pseudo enregistré sans signé ou avec une mauvaise
-    // signature, le message est d'une couleur différente. On peut bien sur
-    // avoir plusieurs enregistrements avec le même nom, et modifier localement
-    // le pseudo.
-
-    // Lorsqu'on active la feature crypto, on demande un mot de passe.
-    // /crypto on password
-    // Celà permet d'enregistrer dans le local storage les clefs publiques et privées
-    // encryptées. Par ailleurs, on peut importer un wallet sous format clair en json
-    // et encrypté par un mot de passe.
-
-    // - [x] activer desactiver la feature crypto (les clefs sont générées si aucune n'est presente à l'activation)
-    // - [ ] enregistrer des clefs utilisateur
-    // - [ ] envoyer un message privé à une personne.
-    // - [ ] modifier le system d'appel, les offres sont propagées comme les autres messages.
+    _send().then(console.log(`message id ${message.id} sent`))
+        .catch(err => console.error(err));
 }
 
 /*** PATH SERVER IMPLEMENTATION */
