@@ -1,3 +1,5 @@
+const outputView = document.getElementById("outputView");
+
 /* Expands the connection form */
 function addOptions() {
     if (addOptions.value === undefined) {
@@ -108,6 +110,16 @@ function executeCommand(msg) {
         return;
     }
 
+    if (msg.value.startsWith("/addcontact")) {
+        let args = msg.value.split(' ');
+        if (args.length == 3) {
+            addContact(args[2]);
+        } else {
+            pushMessage("usage: /addcontact <username> <id>", { className: "info" })
+        }
+        return;
+    }
+
     if (msg.value.startsWith("/usekeys")) {
         console.log("crypto", msg.value);
         let args = msg.value.split(' ');
@@ -149,38 +161,82 @@ function onMessageSubmit() {
     msg.value = "";
 }
 
-const outputView = document.getElementById("outputView");
-
 function pushMessage(msg, opt) {
-    let newDiv = document.createElement('li');
-    newDiv.innerText = msg;
+    let newMsg = document.createElement('li');
     if (opt) {
+        let symbol = document.createElement('img');
+        newMsg.append(symbol);
+
         if (opt.data) {
-            newDiv.data = opt.data;
             if (opt.data.verified == true) {
-                newDiv.className = "signature_ok"
-                // TODO: add a key button and call `saveMessageKeys` onclick
+                newMsg.onclick = proposeToSaveContact;
+                newMsg.className = "signatureOk";
+                newMsg.data = opt.data.peersKeysId;
+                if (opt.data.warnContact) {
+                    /* Signature valid but corresponds to a contact with same name
+                        who isn't in contacts. */
+                    newMsg.className += " warnContact";
+                    newMsg.onclick = () => {
+                        pushMessage("This user has an invalid signature. This user is probably"
+                            + " trying to scam you.", { className: "info" });
+                    };
+                } else if (peersKeys[opt.data.peersKeysId].registred) {
+                    newMsg.className += " knownPeer";
+                } else {
+                    newMsg.className += " unknownPeer";
+                }
+
             } else if (opt.data.verified == false) {
-                newDiv.className = "signature_nok"
+                newMsg.className = "signatureNok";
+                newMsg.onclick = () => {
+                    pushMessage("This user has an invalid signature. This user is probably"
+                        + " trying to scam you.", { className: "info" });
+                };
+
+            } else if (opt.data.warnContact) {
+                newMsg.className = "warnContact";
+                newMsg.onclick = () => {
+                    pushMessage("This user hasn't signed his message but you know another"
+                        + " contact with that name.", { className: "info" });
+                };
             }
         }
         if (opt.className) {
-            newDiv.className = opt.className;
+            newMsg.className = opt.className;
         }
     }
-    outputView.appendChild(newDiv);
+
+    newMsg.innerHTML += msg;
+    outputView.appendChild(newMsg);
     outputView.scrollTo(0, outputView.scrollHeight);
 }
 
 /**
- * On click to a signed message, we can save his public keys in the local
- * storage so we can recognize him rather mistake him with another guy with
- * the same nickname. Moreover, we can now send a private message to him.
+ * TODO: refacto. This isn't a functor anymore.
  */
-function saveMessageKeys() {
-    saveMessageKeys.contacts[this.data.peers_keys_id]
-        = peersKeys[this.data.peers_keys_id];
-    localStorage.setItem("peers_keys", JSON.stringify(peersKeys));
+function addContact(peerKeysId) {
+    if (addContact.contacts[peerKeysId] === undefined) {
+        addContact.contacts[peerKeysId] = peersKeys[peerKeysId];
+        peersKeys[peerKeysId].registred = true;
+        localStorage.setItem("peers_keys", JSON.stringify(addContact.contacts));
+        pushMessage(`info: user ${peersKeys[peerKeysId].nickname} is registred in you local contacts`, { className: "info" });
+    } else {
+        pushMessage(`info: user ${peersKeys[peerKeysId].nickname} is already registred in you local contacts`, { className: "info" });
+    }
+}
+
+function proposeToSaveContact() {
+    const peer = peersKeys[this.data];
+    if (peer) {
+        if (addContact.contacts[this.data] === undefined) {
+            pushMessage("Press enter to validate the command", { className: "info" });
+            document.getElementById("messageTextArea").value = `/addcontact ${peer.nickname} ${this.data}`;
+        } else {
+            pushMessage(`info: user ${peer.nickname} is already registred in you local contacts`, { className: "info" });
+        }
+    } else {
+        pushMessage(`info: invalid peer informations`, { className: "info" });
+    }
 }
 
 /**
@@ -188,22 +244,24 @@ function saveMessageKeys() {
  */
 const peersKeys = function init_peers_keys() {
     /* Initialize peers_keys */
-    let ret = localStorage.getItem("peers_keys");
+    let ret = JSON.parse(localStorage.getItem("peers_keys"));
     if (ret == null) {
-        saveMessageKeys.contacts = {};
+        addContact.contacts = {};
         return {};
     }
-    saveMessageKeys.contacts = ret;
+    addContact.contacts = JSON.parse(localStorage.getItem("peers_keys"));
     Object.values(ret).forEach(value => value.registred = true);
     return ret;
 }();
 
 peersKeys.findNickname = (nickname) => {
+    console.log("find nickname");
     return Object.values(peersKeys)
         .filter(peer => peer.nickname == nickname);
 };
 
 peersKeys.set = (key, value) => {
+    console.log("add peer keys");
     if (peersKeys[key] === undefined) {
         peersKeys[key] = value;
         return false;
@@ -221,26 +279,38 @@ peersKeys.set = (key, value) => {
 setOnMessages((/** @type { ChatMessage } */ message) => {
 
     let known = false;
-    let peers_keys_id = undefined;
-    if (message.verified) {
-        peers_keys_id = hash(message.pubkey);
-        known = peersKeys.set(peers_keys_id, {
+    let peersKeysId = undefined;
+    /* Even if the message is ok (correct signature or just no signature);
+        we want to warn the user if:
+        1. The message come with the same nickname as another user that
+            we had registred in our local contact. But with a different key.
+        2. The message come without crypto and we have in our local contact
+            someone with the same nickname. */
+    let warnContact = false;
+    if (message.verified === undefined) {
+        warnContact = peersKeys.findNickname(message.nickname).length > 0;
+    } else if (message.verified) {
+        peersKeysId = hash(message.pubkey);
+        known = peersKeys.set(peersKeysId, {
             cryptoKey: message.cryptoKey,
             pubkey: message.pubkey,
             nickname: message.nickname,
         });
+        warnContact = !known && peersKeys.findNickname(message.nickname).length > 0;
     }
 
     let nickname = known
-            && peersKeys[peers_keys_id].registred
-            && message.nickname != peersKeys[peers_keys_id].nickname
-        ? `${message.nickname} (${peersKeys[peers_keys_id].nickname})`
+            && peersKeys[peersKeysId].registred
+            && message.nickname != peersKeys[peersKeysId].nickname
+        ? `${message.nickname} (${peersKeys[peersKeysId].nickname})`
         : message.nickname;
 
     pushMessage(`${nickname}: ${message.content}`, {
         data: {
-            peers_keys_id,
-            verified: message.verified
+            peersKeysId,
+            verified: message.verified,
+            nickname,
+            warnContact
         }
     });
 });

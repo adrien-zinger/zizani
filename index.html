@@ -128,6 +128,40 @@
             right: 15px;
             bottom: 0px;
         }
+
+        li.signatureOk {
+            display: flex;
+            align-items: center;
+        }
+
+        li.signatureOk img {
+            content: url("icons8-key-24.png");
+            height: 11px;
+            width: 11px;
+            margin-right: 5px;
+        }
+
+        li.signatureOk.knownPeer img {
+            content: url("icons8-ok-24.png");
+            height: 11px;
+            width: 11px;
+            margin-right: 5px;
+        }
+
+        li.warnContact img {
+            /* override any other class */
+            content: url("icons8-warning-50.png") !important;
+            height: 11px;
+            width: 11px;
+            margin-right: 5px;
+        }
+
+        li.signatureNok img {
+            content: url("icons8-warning-50.png");
+            height: 11px;
+            width: 11px;
+            margin-right: 5px;
+        }
     </style>
 </header>
 
