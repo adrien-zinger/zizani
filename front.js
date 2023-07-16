@@ -45,10 +45,12 @@ function submitJoinRoom() {
     }
     // Change url to keep current room and pseudo even
     // after a refresh.
+    let url = new URL(window.location.href);
+    url.searchParams.set("room", roomElt.value);
     window.history.pushState(
         null,
         "",
-        `${window.location.href}?room=${roomElt.value}`
+        url.href
     );
     console.log("join room");
     join(roomElt.value, serverValue);
@@ -72,27 +74,37 @@ This is when you choose to use cryptography, you will produce
 some keys and the will be stored (encrypted) somewhere. */
 
 getKeysFromStorage = (id) => {
-    let keys = localStorage.getItem(id);
+    let keys = localStorage.getItem(`k-${id}`);
     return keys ? keys : undefined;
 }
 
 setKeysToStorage = (id, keys) => {
-    localStorage.setItem(id, keys);
+    localStorage.setItem(`k-${id}`, keys);
 }
 
-function onMessageSubmit() {
-    let msg = document.getElementById("messageTextArea");
-
-    if (msg.value === "") {
+function executeCommand(msg) {
+    if (msg.value == "/help") {
+        pushMessage("info: TODO", { className: "info" });
         return;
     }
 
-    if (msg.value === "/call") {
-        msg.value = "";
+    if (msg.value == "/call") {
         pushMessage("info: vous êtes sur le point de passer un appel audio." +
-            " Cette fonctionnalité est encore en développement", "info");
-        pushMessage("info: veuillez patienter, nous connectons les pairs entre eux. Celà peut prendre quelques secondes", "info");
+            " Cette fonctionnalité est encore en développement", { className: "info" });
+        pushMessage("info: veuillez patienter, nous connectons les pairs entre eux. Celà peut prendre quelques secondes", { className: "info" });
         startCall();
+        return;
+    }
+
+    if (msg.value.startsWith("/nickname")) {
+        let args = msg.value.split(' ');
+        if (args.length == 2) {
+            pushMessage("info: you're now " + args[1], { className: "info" })
+            currData.nickname = args[1];
+            localStorage.setItem("nickname", args[1]);
+        } else {
+            pushMessage("usage: /nickname <string>", { className: "info" })
+        }
         return;
     }
 
@@ -100,18 +112,40 @@ function onMessageSubmit() {
         console.log("crypto", msg.value);
         let args = msg.value.split(' ');
         loadKeys(args[1], args[2]).then(() => {
-            pushMessage(`info: you are currently using cryptography with ${args[1]}'s keys`, "info");
+            pushMessage(`info: you are currently using cryptography with ${args[1]}'s keys`, { className: "info" });
         }).catch((err) => {
             console.error(err);
-            pushMessage(`info: cannot load keys`, "info");
+            pushMessage(`warning: cannot load keys`, { className: "info" });
         });
         msg.value = "";
-        pushMessage(`info: loading ${args[1]}'s keys`, "info");
+        pushMessage(`info: loading ${args[1]}'s keys...`, { className: "info" });
         return;
     }
 
-    send(msg.value);
-    pushMessage(`${currData.nickname}: ${msg.value}`);
+    if (msg.value.startsWith("/listkeys")) {
+        console.log("crypto", msg.value);
+        let keys = Object.keys(localStorage)
+            .filter(i => i.startsWith("k-"))
+            .map(i => i.replace("k-", ""));
+        pushMessage(`${JSON.stringify(keys)}`, { className: "info" });
+        return;
+    }
+}
+
+function onMessageSubmit() {
+    let msg = document.getElementById("messageTextArea");
+
+    if (msg.value.length == 0) {
+        return;
+    }
+
+    if (msg.value[0] == "/") {
+        executeCommand(msg);
+    } else {
+        send(msg.value);
+        pushMessage(`${currData.nickname}: ${msg.value}`);
+    }
+
     msg.value = "";
 }
 
@@ -145,14 +179,14 @@ function pushMessage(msg, opt) {
  */
 function saveMessageKeys() {
     saveMessageKeys.contacts[this.data.peers_keys_id]
-        = peers_keys[this.data.peers_keys_id];
-    localStorage.setItem("peers_keys", JSON.stringify(peers_keys));
+        = peersKeys[this.data.peers_keys_id];
+    localStorage.setItem("peers_keys", JSON.stringify(peersKeys));
 }
 
 /**
  * It's a temporary container of every peer's keys.
  */
-const peers_keys = function init_peers_keys() {
+const peersKeys = function init_peers_keys() {
     /* Initialize peers_keys */
     let ret = localStorage.getItem("peers_keys");
     if (ret == null) {
@@ -164,25 +198,22 @@ const peers_keys = function init_peers_keys() {
     return ret;
 }();
 
-peers_keys.findNickname = (nickname) => {
-    for (k in Object.values(peers_keys)) {
-        if (k.nickname == nickname) {
-            return k;
-        }
-    }
+peersKeys.findNickname = (nickname) => {
+    return Object.values(peersKeys)
+        .filter(peer => peer.nickname == nickname);
 };
 
-peers_keys.set = (key, value) => {
-    if (peers_keys[key] === undefined) {
-        peers_keys[key] = value;
+peersKeys.set = (key, value) => {
+    if (peersKeys[key] === undefined) {
+        peersKeys[key] = value;
         return false;
-    } else if (peers_keys[key].nickname != value.nickname
-        && peers_keys[key].cryptokey == value.cryptokey
-        && peers_keys[key].pubkey == value.pubkey) {
-        if (peers_keys[key].othernames == undefined) {
-            peers_keys[key].othernames = [];
+    } else if (peersKeys[key].nickname != value.nickname
+        && peersKeys[key].cryptoKey == value.cryptoKey
+        && peersKeys[key].pubkey == value.pubkey) {
+        if (peersKeys[key].othernames == undefined) {
+            peersKeys[key].othernames = [];
         }
-        peers_keys[key].othernames.push(value.nickname);
+        peersKeys[key].othernames.push(value.nickname);
     }
     return true;
 };
@@ -193,17 +224,17 @@ setOnMessages((/** @type { ChatMessage } */ message) => {
     let peers_keys_id = undefined;
     if (message.verified) {
         peers_keys_id = hash(message.pubkey);
-        known = peers_keys.set(peers_keys_id, {
-            cryptokey: message.cryptokey,
+        known = peersKeys.set(peers_keys_id, {
+            cryptoKey: message.cryptoKey,
             pubkey: message.pubkey,
             nickname: message.nickname,
         });
     }
 
     let nickname = known
-            && peers_keys[peers_keys_id].registred
-            && message.nickname != peers_keys[peers_keys_id].nickname
-        ? `${message.nickname} (${peers_keys[peers_keys_id].nickname})`
+            && peersKeys[peers_keys_id].registred
+            && message.nickname != peersKeys[peers_keys_id].nickname
+        ? `${message.nickname} (${peersKeys[peers_keys_id].nickname})`
         : message.nickname;
 
     pushMessage(`${nickname}: ${message.content}`, {
@@ -214,41 +245,61 @@ setOnMessages((/** @type { ChatMessage } */ message) => {
     });
 });
 
-let statusView = 0; // idle
+/**
+ * Status of the view.
+ *  - 0: idle (initially and after the connexion lost)
+ *  - 1: proposal sent once
+ *  - 2: connected
+ *  - 3: connection lost
+*/
+let statusView = 0;
 
 onPrepareWsProposal = () => {
     document.getElementById("connectionForm").style.display = "none";
     document.getElementById("roomView").style.display = "inline-block";
-    pushMessage("info: recherche du salon", { className: "info" });
-    pushMessage(`info: vous pouvez passer des appels vocaux avec vos collaborateurs \
-    en utilisant la commande '/call', cette fonctionnalité est encore en phase de test`, { className: "info" });
+    pushMessage(`info: welcome ${currData.nickname}`, { className: "info" });
+    pushMessage(`You can use command \\help to show the current features`, { className: "info" });
+
+    onPrepareWsProposal = () => {}; // react to onPrepareWsProposal only once
 };
 
 onSendWsProposal = () => {
-    if (statusView != 1) {
-        pushMessage("info: attente des participants", { className: "info" });
-        onSendWsProposal = () => {}; // Print message just once 
+    if (statusView == 0) {
+        pushMessage("info: you're currently alone in the room", { className: "info" });
+        statusView = 1;
     }
 };
 
 /** Afficher que le client est connecté */
 function activateRoom() {
-    pushMessage("info: vous êtes connecté", { className: "info" });
+    pushMessage(`info: connected to room ${currData.room}`, { className: "info" });
+    statusView = 2;
 }
 
 onConnectionToRoomDone = () => {
-    if (statusView != 1) {
+    if (statusView == 1) {
         activateRoom();
-        statusView = 1;
+    } else {
+        console.error(`invalid event corresponding to status ${statusView} (expected 1)`);
     }
 };
 
 onWsProposalAnswerOpened = () => {
-    if (statusView != 1) {
+    if (statusView == 1) {
         activateRoom();
-        statusView = 1;
+    } else {
+        console.error(`invalid event corresponding to status ${statusView} (expected 1)`);
     }
 };
+
+onPeerConnectionsLost = () => {
+    if (statusView == 2) {
+        pushMessage("info: the connection to the room has been closed", { className: "info" });
+        statusView = 0;
+    } else {
+        console.error(`invalid event corresponding to status ${statusView} (expected 2)`);
+    }
+}
 
 userAcceptCall = (pseudo, callback) => {
     if (userAcceptCall.accepted) {

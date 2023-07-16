@@ -264,27 +264,25 @@ async function loadKeys(id, password) {
         console.log("sign key imported")
         currData.cryptoKeyPair.privateKey = await importFromString(keys.cryptoKeyPair.privateKey, cryptoAlgo, "decrypt");
         currData.cryptoKeyPair.publicKey = keys.cryptoKeyPair.publicKey;
-        console.log("crypto key imported")
-        return;
-    }
-
-    await genSignKeyPair();
-    await genCryptoKeyPair();
-    console.log("keys generated");
-
-    keys = {
-        signKeyPair: {
-            publicKey: currData.signKeyPair.publicKey,
-            privateKey: await exportAsString(currData.signKeyPair.privateKey),
-        },
-        cryptoKeyPair: {
-            publicKey: currData.cryptoKeyPair.publicKey,
-            privateKey: await exportAsString(currData.cryptoKeyPair.privateKey),
-        }
-    };
-
-    setKeysToStorage(id, await encrypt(JSON.stringify(keys), password));
+        console.log("crypto key imported");
+    } else {
+        await genSignKeyPair();
+        await genCryptoKeyPair();
+        console.log("keys generated");
     
+        keys = {
+            signKeyPair: {
+                publicKey: currData.signKeyPair.publicKey,
+                privateKey: await exportAsString(currData.signKeyPair.privateKey),
+            },
+            cryptoKeyPair: {
+                publicKey: currData.cryptoKeyPair.publicKey,
+                privateKey: await exportAsString(currData.cryptoKeyPair.privateKey),
+            }
+        };
+    
+        setKeysToStorage(id, await encrypt(JSON.stringify(keys), password));
+    }
     currData.crypto = true;
 }
 
@@ -1130,8 +1128,8 @@ async function createConnectionProposals(setMessageRooting) {
 
     createConnectionProposals.nextTimeout = setTimeout(_ => {
         createConnectionProposals.nextTimeout = undefined;
-        createConnectionProposals(setMessageRooting), 30000
-    });
+        createConnectionProposals(setMessageRooting);
+    }, 30000);
 }
 
 /*** CONSTANTS */
