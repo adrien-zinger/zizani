@@ -92,17 +92,26 @@ setKeysToStorage = (id, keys) => {
     localStorage.setItem(`k-${id}`, keys);
 }
 
-function executeCommand(msg) {
+/**
+ * 
+ * @param {{value: string}} msg 
+ * @param {*} priv 
+ * @returns 
+ */
+function executeCommand(msg, priv) {
     if (msg.value == "/help") {
         pushMessage("info: TODO", { className: "info" });
         return;
     }
 
-    if (msg.value == "/call") {
-        pushMessage("info: vous êtes sur le point de passer un appel audio." +
-            " Cette fonctionnalité est encore en développement", { className: "info" });
-        pushMessage("info: veuillez patienter, nous connectons les pairs entre eux. Celà peut prendre quelques secondes", { className: "info" });
-        startCall();
+    if (msg.value.startsWith("/call")) {
+        let args = msg.value.split(' ');
+        if (args.length == 2) {
+            pushMessage("info: Please wait for remote user", { className: "info" });
+            callUser(args[1]);
+        } else {
+            pushMessage("usage: /call <username>", { className: "info" })
+        }
         return;
     }
 
@@ -129,7 +138,6 @@ function executeCommand(msg) {
     }
 
     if (msg.value.startsWith("/usekeys")) {
-        console.log("crypto", msg.value);
         let args = msg.value.split(' ');
         loadKeys(args[1], args[2]).then(() => {
             pushMessage(`info: you are currently using cryptography with ${args[1]}'s keys`, { className: "info" });
@@ -143,11 +151,58 @@ function executeCommand(msg) {
     }
 
     if (msg.value.startsWith("/listkeys")) {
-        console.log("crypto", msg.value);
         let keys = Object.keys(localStorage)
             .filter(i => i.startsWith("k-"))
             .map(i => i.replace("k-", ""));
         pushMessage(`${JSON.stringify(keys)}`, { className: "info" });
+        return;
+    }
+
+    if (msg.value.startsWith("/privcall")) {
+        let args = msg.value.split(' ');
+        if (args.length == 2) {
+            /** @type {Array<PeerKeys>} */
+            let keys = peersKeys.findNickname(args[1]);
+            if (keys.length == 0) {
+                pushMessage(`error: no user named ${args[1]}`, { className: "info" });
+                return;
+            }
+            if (keys.length > 1) {
+                pushMessage(`error: multiple users are named ${args[1]}`, { className: "info" });
+                return;
+            }
+            pushMessage("info: Please wait for remote user", { className: "info" });
+            callUser(args[1], keys[0].cryptoKey);
+        } else {
+            pushMessage("usage: /privcall <username>", { className: "info" });
+        }
+        return;
+    }
+
+    if (msg.value.startsWith("/priv ")) {
+        let args = msg.value.split(' ');
+        if (args.length > 2) {
+            /** @type {Array<PeerKeys>} */
+            let keys = peersKeys.findNickname(args[1]);
+            if (keys.length == 0) {
+                pushMessage(`error: no user named ${args[1]}`, { className: "info" });
+                return;
+            }
+            if (keys.length > 1) {
+                pushMessage(`error: multiple users are named ${args[1]}`, { className: "info" });
+                return;
+            }
+            let msg = messageTextArea.value.replace(args[0], '').replace(args[1], '').trim();
+            send(msg, {to: args[1], cryptokey: keys[0].cryptoKey}).then(() => {
+                console.log("onMessageSubmit: success");
+            }).catch(err => {
+                console.error(`onMessageSubmit: ${err}`);
+            });
+            pushMessage(`${currData.nickname}: ${msg}` /* TODO: private style */);
+        } else {
+            /* TODO: we should be able to send a private message to a group */
+            pushMessage("usage: /priv <username>", { className: "info" });
+        }
         return;
     }
 }
@@ -159,7 +214,12 @@ function onMessageSubmit() {
     if (messageTextArea.value[0] == "/") {
         executeCommand(messageTextArea);
     } else {
-        send(messageTextArea.value);
+        /* send message with zizani */
+        send(messageTextArea.value).then(() => {
+            console.log("onMessageSubmit: success");
+        }).catch(err => {
+            console.error(`onMessageSubmit: ${err}`);
+        });
         pushMessage(`${currData.nickname}: ${messageTextArea.value}`);
     }
 
@@ -202,7 +262,7 @@ function pushMessage(msg, opt) {
                 newMsg.className = "warnContact";
                 newMsg.onclick = () => {
                     pushMessage("This user hasn't signed his message but you know another"
-                        + " contact with that name.", { className: "info" });
+                        + " contact with the same name.", { className: "info" });
                 };
             }
         }
@@ -246,6 +306,7 @@ function proposeToSaveContact() {
 
 /**
  * It's a temporary container of every peer's keys.
+ * @type {Array<PeerKeys>}
  */
 const peersKeys = function init_peers_keys() {
     /* Initialize peers_keys */
@@ -259,6 +320,18 @@ const peersKeys = function init_peers_keys() {
     return ret;
 }();
 
+/**
+ * @typedef PeerKeys
+ * @property {string} nickname
+ * @property {string} pubkey
+ * @property {string} cryptoKey
+ * @property {Array<string>} othernames
+ */
+
+/**
+ * @param {string} nickname 
+ * @returns {Array<PeerKeys>}
+ */
 peersKeys.findNickname = (nickname) => {
     console.log("find nickname");
     return Object.values(peersKeys)

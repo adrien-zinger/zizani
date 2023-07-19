@@ -15,13 +15,15 @@ const currData = {
     },
     crypto: false,
     signKeyPair: {
-        /** @type {CryptoKey} */
+        /** @type {string} */
         publicKey: undefined,
+        /** @type {CryptoKey} */
         privateKey: undefined
     },
     cryptoKeyPair: {
-        /** @type {CryptoKey} */
+        /** @type {string} */
         publicKey: undefined,
+        /** @type {CryptoKey} */
         privateKey: undefined
     },
     connectedPeerIds: new Set()
@@ -161,6 +163,16 @@ function importFromString(key, algo, usage) {
     );
 }
 
+function importPeerCryptoKey(key) {
+    return window.crypto.subtle.importKey(
+        "spki",
+        str2ab(atob(key)),
+        cryptoAlgo,
+        true,
+        [ "encrypt" ]
+    );
+}
+
 async function exportAsString(key) {
     let buf = await window.crypto.subtle.exportKey("pkcs8", key);
     let pubkey = String.fromCharCode.apply(null, new Uint8Array(buf));
@@ -269,32 +281,31 @@ async function encryptWithKey(str, key) {
         new TextEncoder().encode(str)
     );
 
-    let cipherText = btoa(String.fromCharCode.apply(null, new Uint8Array(buf)));
-
-    return JSON.stringify({
-        cipherText,
-        iv: btoa(String.fromCharCode.apply(null, algo.iv))
-    });
+    return btoa(String.fromCharCode.apply(null, new Uint8Array(buf)));
 }
 
 /**
- * Decrypt function
- * @param {string} str 
- * @param {string} password
+ * Decrypts message from mesh.
+ * 
+ * When we receive an encrypted message from the mesh. We check if the message is destinated
+ * to the local peer by checking the nickname. If any, the content is decrypted here using the
+ * current private crypto key.
+ * 
+ * TODO: next feature, it would be great to load multiple private keys at once. So we'll not
+ * check the current nickname, but the names we associate to them.
+ * @param {string} cipherText
  * @returns {Promise<string>}
  */
-async function decryptWithLocalKey(str) {
-    if (currData.cryptoKeyPair === undefined) {
+async function decryptWithLocalKey(cipherText) {
+    if (currData.cryptoKeyPair.privateKey === undefined) {
         console.warning("no keys to decrypt the content")
-        return;
+        throw "decrypt keys are required";
     }
-    let encrypted = JSON.parse(str);
 
-    let cipherText = str2ab(atob(encrypted.cipherText));
     let dec = await window.crypto.subtle.decrypt(
         cryptoAlgo,
         currData.cryptoKeyPair.privateKey,
-        cipherText
+        str2ab(atob(cipherText))
     );
     return new TextDecoder().decode(dec);
 }
@@ -337,7 +348,8 @@ async function loadKeys(id, password) {
  * @typedef {Object} ChatMessage
  * @property {string} id
  * @property {number} timestamp
- * @property {string} content
+ * @property {boolean | undefined} encrypted
+ * @property {string | { to: string, data: string }} content
  * @property {string} nickname
  * @property {string | undefined} signature
  * @property {string | undefined} pubkey
@@ -489,7 +501,7 @@ function str2ab(str) {
 async function verifyMessage(message) {
     let pubkeyStr = atob(message.pubkey);
     let pubkeyBuffer = str2ab(pubkeyStr);
-    let data = new TextEncoder().encode(`${message.id}${message.content}${message.timestamp}${message.nickname}`);
+    let data = new TextEncoder().encode(`${message.id}${message.encrypted ? message.content.data : message.content}${message.timestamp}${message.nickname}`);
 
     let pubkey = await window.crypto.subtle.importKey(    
         "spki",
@@ -514,66 +526,91 @@ async function verifyMessage(message) {
 }
 
 /**
-* @param {ChatMessage} chatMessage
-* @param {RTCDataChannel} currChannel
-*/
-function onMessageReceived(chatMessage, currChannel) {
-    if (messagesReceived[chatMessage.id] !== undefined) {
+ * On a complete message containing text is received from the RTC mesh.
+ * @param {ChatMessage} message
+ * @param {RTCDataChannel} _currChannel
+ */
+function onMessageReceived(message, _currChannel) {
+    if (messagesReceived[message.id] !== undefined) {
+        /* skip if message has already been received */
         return;
     }
 
-    async function checkCryptoData() {
-        if (chatMessage.pubkey !== undefined &&
-            chatMessage.signature !== undefined) {
-            let res = await verifyMessage(chatMessage);
+    async function _receive() {
+        /**
+         * Local representation of the message. We don't modify the original. 
+         * @type {ChatMessage & { verified: boolean | undefined }} */
+        let local = Object.create(message)
+        if (message.pubkey !== undefined && message.signature !== undefined) {
+            let res = await verifyMessage(message);
             /* TODO: after stabilization of the feature we should ban any channel
                 that send us an invalid message.
-                if (res) banPeerByChannelId(currChannel.id); */
-            return res;
-        } else if (chatMessage.pubkey === undefined &&
-            chatMessage.signature === undefined) {
-            return undefined;
-            // nothing to do
+                if (!res) banPeerByChannelId(currChannel.id); */
+            local.verified = res;
+        } else if (message.pubkey === undefined && message.signature === undefined) {
+            /* correct behavior, nothing to do <=> local.verified = undefined; */
         } else {
-            console.log("strange behaviour behind the message " + chatMessage.id);
+            console.warn("strange behaviour behind the message " + message.id);
             /* TODO: after stabilization of the feature we should ban any channel
                 that send us an invalid message.
                 banPeerByChannelId(currChannel.id); */
-            return false;
+            local.verified = false;
         }
-    }
 
-    checkCryptoData().then(res => {
-        console.log(chatMessage);
-        chatMessage.verified = res;
+        console.log(message);
 
         /* If message content is an object, if he contains a `to` property
-            decrypt the message */
-        if (chatMessage.content.to == currData.nickname) {
-            decryptWithLocalKey(chatMessage.content.data).then((content) => {
-                onMessageIncoming(Object.create(chatMessage, { content }));
-            }).catch(() => console.warn("failed to decrypt message"));
+           and if the message is encrypted => decrypt the message. There is no reason
+           to have an encrypted message without an object as content. */
+        if (message.encrypted) {
+            /** @see decryptWithLocalKey for a TODO comment */
+            if (message.content.to == currData.nickname) {
+                try {
+                    local.content = await decryptWithLocalKey(message.content.data);
+                    onMessageIncoming(local);
+                } catch (err) {
+                    /* don't dismiss the message, it can be destinated to someone else */
+                    console.warn(`unable to decrypt a message that is destinated to user ${currData.nickname}`);
+                    console.warn(err);
+                }
+            } else {
+                console.warn("dismiss message: encrypted message should have an Object as content");
+                throw "message dissmissed";
+            }
+        } else if (typeof message.content === "string") {
+            onMessageIncoming(local);
         } else {
-            onMessageIncoming(chatMessage);
+            console.warn("dismiss message: normal message text content should be a string");
+            throw "message dissmissed";
         }
 
-        messagesReceived[chatMessage.id] = chatMessage;
+        messagesReceived[message.id] = message;
         /** @type {[]} */
-        let channelsIdsThatKnow = messagesInfo.channelsKnowId(chatMessage.id);
-        messagesInfo.delete(chatMessage.id);
+        let channelsIdsThatKnow = messagesInfo.channelsKnowId(message.id);
+        messagesInfo.delete(message.id);
 
-        // Une fois reçu, je peux forward à tout mon entourage
-        // l'id du message.
+        /* Forward the message to the other peers.
+            ----
+            Une fois reçu, je peux forward à tout mon entourage
+            l'id du message. */
         peerConnections.forEach(pc => {
-            if (channelsIdsThatKnow.includes(pc.channel.id)) return;
+            if (channelsIdsThatKnow.includes(pc.channel.id)) {
+                /* Skip the peers that has sent me the id
+                    (it means they already have the full message) */
+                return;
+            }
             const msg = {
                 path: rootMessageIdentifier,
-                args: chatMessage.id,
+                args: message.id,
             };
             pc.channel.send(JSON.stringify(msg));
         });
-    }).catch(() => {
-        console.warn("message received error detected");
+    }
+
+    _receive().then(() => {
+        console.log("message received: success");
+    }).catch(err => {
+        console.warn(`message received: ${err}`);
     });
 }
 
@@ -628,47 +665,6 @@ async function signMessage(id, message, date) {
     );
     let signBin = String.fromCharCode.apply(null, new Uint8Array(signatureBuf));
     return btoa(signBin);
-}
-
-function sendMessage(content, priv) {
-    const timestamp = Date.now();
-
-    /** @type {ChatMessage} */
-    const message = {
-        id: window.crypto.randomUUID(),
-        timestamp,
-        content,
-        nickname: currData.nickname,
-    };
-
-    async function _send() {
-        if (priv) {
-            message.content = {
-                to: nickname,
-                data: await encryptWithKey(content, key)
-            };
-        }
-        if (currData.crypto) {
-            message.signature = await signMessage(message.id, content, timestamp);
-            message.pubkey = currData.signKeyPair.publicKey,
-            message.cryptoKey = currData.cryptoKeyPair.publicKey
-        }
-        messagesReceived[message.id] = message;
-        peerConnections.forEach(pc => {
-            const msg = {
-                path: rootMessageIdentifier,
-                args: message.id,
-            }
-            try {
-                pc.channel.send(JSON.stringify(msg));
-            } catch {
-                peerConnections.close(pc.id);
-            }
-        });
-    }
-
-    _send().then(console.log(`message id ${message.id} sent`))
-        .catch(err => console.error(err));
 }
 
 /*** PATH SERVER IMPLEMENTATION */
@@ -851,6 +847,8 @@ function addPath(path) {
 /*** PEER IMPLEMENTATION */
 
 const peerConnectionCalls = [];
+/* TODO: temporary put the call proposals in another container. Add a system
+of cancellation */
 
 function banPeer(fn) {
     let i = peerConnections.findIndex(fn);
@@ -1028,39 +1026,103 @@ function onProposalAcceptedReceived(data) {
 /**
  * On reçoit du résaux une proposition d'appel audio. On va réponse oui en
  * envoyant une `answer` adaptée.
- * @param {{offer: RTCSessionDescription, channelLabel: string, pseudo: string} data 
+ * @param {CallProposal} data 
  * @param {RTCDataChannel} channel 
  */
 function onCallProposalReceived(data, channel) {
     console.log("call proposal received");
-    userAcceptCall(data.pseudo, () => {
-        createAnswerWithAudio(data.offer).then(answer => {
-            const msg = {
-                path: rootCallProposalAccepted,
-                args: {answer: answer.localDescription, channelLabel: data.channelLabel}
-            }
-            channel.send(JSON.stringify(msg));
-            channel.calling = true;
-            peerConnections.push(answer);
-            startCallWithCurrentCluster();
+
+    if (!(data.to === undefined || data.to == currData.nickname)) {
+        console.log("forward call proposal");
+        /* TODO: as we do with messages, send first an announcement
+            then on request send the full message body
+            thougth: there is a problem to solve. how many time, how many proposals
+            should we keep in the local cache? */
+        const msg = JSON.stringify({
+            path: rootCallProposal,
+            args: data
         });
-    });
+        peerConnections.forEach(pc => pc.channel.send(msg));
+        return;
+    }
+
+    async function _userCallAccepted() {
+        let answer = await createAnswerWithAudio(data.offer);
+        const msg = {
+            path: rootCallProposalAccepted,
+            args: {
+                proposalId: data.id,
+                answer: answer.localDescription
+            }
+        };
+        if (data.encrypted) {
+            msg.args.answer = await encryptWithKey(msg.args.answer, data.key);
+        }
+        channel.send(JSON.stringify(msg));
+        peerConnectionCalls.push(answer);
+    }
+
+    if (data.encrypted) {
+        if (data.key === undefined) {
+            console.warn("call accepted: missing remote key in encrypted data");
+            return;
+        }
+        decryptWithLocalKey(data.offer)
+            .then(offer => JSON.parse(offer))
+            .then(offer => {
+                data.offer = offer;
+                userAcceptCall(data.pseudo, () => {
+                    _userCallAccepted().then(() => console.log("call accepted: success"))
+                        .catch(err => console.error(`call accepted: error ${err}`));
+                });
+            })
+            .catch(err => {
+                console.warn(`call accepted: dismiss call destinated to ${data.to} because of failed to decrypt with local key.`)
+                console.warn(err);
+            });
+    } else {
+        userAcceptCall(data.pseudo, () => {
+            _userCallAccepted().then(() => console.log("call accepted: success"))
+                .catch(err => console.error(`call accepted: error ${err}`));
+        });
+    }
 }
 
 /**
- * On reçoit du résaux une proposition d'appel audio. On va réponse oui en
- * envoyant une `answer` adaptée.
- * @param {{answer: RTCSessionDescription, channelLabel: string}} data 
+ * On reçoit du résaux une réponse positive d'appel audio.
+ * 
+ * @param {{answer: RTCSessionDescription, proposalId: string}} data 
  */
-function onCallProposalAccepted(data) {
-    console.log("on call proposal accepted");
-    peerConnectionCalls.forEach(pc => {
-        if (pc.channel.label == data.channelLabel) {
-            console.log("call running");
-            pc.setRemoteDescription(data.answer)
-                .then(() => console.log("call response handled"));
+function onCallProposalAcceptedReceived(data) {
+    console.log("on call proposal accepted received");
+
+    /* Look in our calls connections, if there I found a corresponding
+        pc I can connect to it.
+        If I don't find any corresponding connection I forward the message */
+
+    for (pc of peerConnectionCalls) {
+        if (pc.id == data.proposalId) {
+            console.log("call: connect to remote");
+            if (pc.encrypted) {
+                decryptWithLocalKey(data.answer)
+                    .then(answer => JSON.parse(answer))
+                    .then(answer => pc.setRemoteDescription(answer))
+                    .then(() => console.log("call: response handled"));
+                delete pc.encrypted;
+            } else {
+                pc.setRemoteDescription(data.answer).then(() =>
+                    console.log("call: response handled"));
+            }
+            return;
         }
+    }
+
+    console.log("call: forward proposal accepted");
+    const msg = JSON.stringify({
+        path: rootCallProposalAccepted,
+        args: data
     });
+    peerConnections.forEach(pc => pc.channel.send(msg))
 }
 
 /** 
@@ -1200,7 +1262,7 @@ const RTCMessageRooter = [
     onConnectionProposalReceived,
     onProposalAcceptedReceived,
     onCallProposalReceived,
-    onCallProposalAccepted,
+    onCallProposalAcceptedReceived,
 ];
 
 /*** RTC TOOLS IMPLEMENTATION */
@@ -1379,10 +1441,62 @@ async function createOfferWithAudio() {
 
 /**
  * Send a message 
- * @param {string} msg 
+ * @param {string} content
+ * @param {undefined | {to: string, cryptokey: string}} privateMessageInfo Private massage informations
+ *      (to: destinated to, key: crypto public key). Undefined otherwise. 
  */
-function send(msg) {
-    sendMessage(`${msg}`)
+async function send(content, privateMessageInfo) {
+
+    const timestamp = Date.now();
+
+    /** @type {ChatMessage} */
+    const message = {
+        id: window.crypto.randomUUID(),
+        timestamp,
+        content,
+        nickname: currData.nickname,
+    };
+
+    if (privateMessageInfo) {
+        let key;
+        try {
+            key = await importPeerCryptoKey(privateMessageInfo.cryptokey);
+        } catch (err) {
+            console.error(`failed to import bob key ${privateMessageInfo.to}`);
+            throw err;
+        }
+        try {
+            message.content = {
+                to: privateMessageInfo.to,
+                data: await encryptWithKey(content, key)
+            };
+            message.encrypted = true;
+        } catch(err) {
+            console.error(`failed to encrypt message for ${privateMessageInfo.to}`);
+            throw err;
+        }
+    }
+
+    if (currData.crypto) {
+        message.signature = await signMessage(message.id,
+            message.encrypted ? message.content.data : message.content,
+            timestamp);
+        message.pubkey = currData.signKeyPair.publicKey,
+        message.cryptoKey = currData.cryptoKeyPair.publicKey
+    }
+
+    messagesReceived[message.id] = message;
+    peerConnections.forEach(pc => {
+        const msg = {
+            path: rootMessageIdentifier,
+            args: message.id,
+        }
+        try {
+            pc.channel.send(JSON.stringify(msg));
+        } catch {
+            peerConnections.close(pc.id);
+        }
+    });
 }
 
 async function join(room, srv) {
@@ -1412,47 +1526,71 @@ function setNickName(nickname) {
 
 /**
  * @param {(ChatMessage) => {}} handleMessageFunction 
+ * 
+ * TODO: remove that function and prefer the pure overrides method.
  */
 function setOnMessages(handleMessageFunction) {
     onMessageIncoming = handleMessageFunction;
 }
 
 /**
- * Sert à créer des nouvelles offres pour chacun des noeuds auquels
- * je suis actuellement connecté afin de créer un appel audio.
- * 
- * Actuellement, la fonctionnalité est limité et risque d'avoir des
- * comportements indésirés avec de nombreuses personnes. Il faudrait
- * permettre de créer des cluster personnalisé en "invitant" dans des
- * channels privés.
- * 
- * Il faudrait aussi pouvoir gérer le nombre de personnes maximum
- * dans un réseau. Peut être y inclure du raft.
+ * @typedef CallProposal
+ * @property {string} id
+ * @property {string | undefined} to nickname who are the target. Anybody if undefined.
+ * @property {string} peerId id of the local peer
+ * @property {string} pseudo nickname of the local peer
+ * @property {boolean | undefined} encrypted true if the offer is encrypted
+ * @property {string} offer webRTC offer (encrypted if property `encrypted` is defined)
+ * @property {string | undefined} key
  */
-async function startCallWithCurrentCluster() {
-    /** @type {Array<RTCPeerConnection>} */
-    let newPeerConnections = await Promise.all(peerConnections.map(_ => createOfferWithAudio()));
-    let i = 0;
-    peerConnections.map(/** @type {PeerConnection} */pc => {
-        if (pc.channel.calling != true) {
-            let newPc = newPeerConnections[i++];
-            console.assert(newPc != undefined);
-            console.assert(newPc.channel.label != undefined);
-            const msg = {
-                path: rootCallProposal,
-                args: {
-                    channelLabel: newPc.channel.label,
-                    offer: newPc.localDescription,
-                    pseudo: currData.nickname
-                }
-            }
-            pc.channel.send(JSON.stringify(msg));
-            pc.channel.calling = true;
-        }
-    });
-    newPeerConnections.forEach(offer => peerConnectionCalls.push(offer));
-}
 
-function startCall() {
-    startCallWithCurrentCluster().then(() => console.log("sending call"));
+/**
+ * Créé un appel audio avec un utilisateur sur le réseau.
+ * @param {string} user
+ * @param {undefined | string} cryptoKey
+ */
+function callUser(user, cryptoKey) {
+    async function _startCall() {
+        if (cryptoKey && currData.cryptoKeyPair.publicKey) {
+            console.warn("start call: start a private call require to use keys itself");
+            return;
+        }
+        if (peerConnections.length == 0) {
+            console.warn("start call: nobody to call");
+            return;   
+        }
+        /** @type {Array<RTCPeerConnection>} */
+        let newPeerConnection = await createOfferWithAudio();
+        newPeerConnection.id = window.crypto.randomUUID();
+
+        let msg = {
+            path: rootCallProposal,
+            /** @type {CallProposal} */
+            args: {
+                to: user,
+                peerId: currData.peerId,
+                id: newPeerConnection.id,
+                offer: newPeerConnection.localDescription,
+                pseudo: currData.nickname
+            }
+        };
+
+        if (cryptoKey) {
+            newPeerConnection.encrypted = true;
+            msg.args.offer = await encryptWithKey(
+                JSON.stringify(newPeerConnection.localDescription),
+                cryptoKey
+            );
+            msg.args.encrypted = true;
+            msg.args.key = currData.cryptoKeyPair.publicKey;
+        }
+
+        msg = JSON.stringify(msg);
+
+        peerConnections.forEach(pc => pc.channel.send(msg));
+        peerConnectionCalls.push(newPeerConnection);
+    }
+
+    _startCall().then(() => console.log("start call: success"))
+        .catch(err => console.error(`start call: ${err}`));
 }
